@@ -10,6 +10,7 @@ import pandas as pd
 
 import scip_first_version.data as energy_data
 from scip_first_version.config import Parameters
+from scip_first_version.model import build_and_solve
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -228,7 +229,6 @@ class ProvisionalEnergyScenarioTests(unittest.TestCase):
                 "electricity_price_cny_per_kwh",
             ],
         )
-        self.assertNotIn("electricity_price_usd_per_kwh", scenario.columns)
         self.assertLessEqual(scenario["solar_available_mw"].max(), 3.0)
         self.assertLessEqual(scenario["wind_available_mw"].max(), 6.6)
 
@@ -460,6 +460,273 @@ class ParameterScaleTests(unittest.TestCase):
             params.wind_capacity_mw,
             expected_capacity_mw,
         )
+
+
+class CostOptimizationModelTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        workload_path = (
+            PROJECT_ROOT
+            / "data"
+            / "instance_usage_grouped_300_seconds_month.csv"
+        )
+        _, hourly, representative_day, _ = energy_data.load_and_prepare(
+            workload_path
+        )
+        if representative_day != 8:
+            raise AssertionError(
+                f"代表日应为 8，实际为 {representative_day}。"
+            )
+        cls.cpu_arrival = (
+            hourly[hourly["day"] == representative_day]
+            .sort_values("hour")["avg_cpu"]
+            .to_numpy(dtype=float)
+        )
+        cls.params = Parameters()
+        cls.scenario = energy_data.load_energy_scenario(
+            SCENARIO_PATH,
+            cls.params,
+            weather_source_path=WEATHER_SOURCE_PATH,
+        )
+        cls.temporary_directory = TemporaryDirectory()
+        cls.output_dir = Path(cls.temporary_directory.name)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.temporary_directory.cleanup()
+
+    def solve(
+        self,
+        *,
+        cpu_arrival: np.ndarray | None = None,
+        solar_available_mw: np.ndarray | None = None,
+        wind_available_mw: np.ndarray | None = None,
+        electricity_price_cny_per_kwh: np.ndarray | None = None,
+        params: Parameters | None = None,
+        enable_shift: bool = False,
+        enable_renewables: bool = True,
+        case_name: str,
+    ) -> tuple[pd.DataFrame, dict]:
+        return build_and_solve(
+            cpu_arrival=(
+                self.cpu_arrival if cpu_arrival is None else cpu_arrival
+            ),
+            solar_available_mw=(
+                self.scenario["solar_available_mw"].to_numpy(dtype=float)
+                if solar_available_mw is None
+                else solar_available_mw
+            ),
+            wind_available_mw=(
+                self.scenario["wind_available_mw"].to_numpy(dtype=float)
+                if wind_available_mw is None
+                else wind_available_mw
+            ),
+            electricity_price_cny_per_kwh=(
+                self.scenario[
+                    "electricity_price_cny_per_kwh"
+                ].to_numpy(dtype=float)
+                if electricity_price_cny_per_kwh is None
+                else electricity_price_cny_per_kwh
+            ),
+            params=self.params if params is None else params,
+            enable_shift=enable_shift,
+            enable_storage=False,
+            enable_renewables=enable_renewables,
+            case_name=case_name,
+            output_dir=self.output_dir,
+            show_log=False,
+        )
+
+    def test_primary_costs_are_independently_recomputed_in_cny(self) -> None:
+        result, metrics = self.solve(case_name="primary_cost_recompute")
+        time_step_h = self.params.time_step_h
+        expected_grid = float(
+            (
+                result["electricity_price_cny_per_kwh"]
+                * result["grid_power_mw"]
+                * time_step_h
+                * 1000.0
+            ).sum()
+        )
+        expected_solar = float(
+            (
+                self.params.solar_om_cost_cny_per_kw
+                * result["solar_used_mw"]
+                * time_step_h
+                * 1000.0
+            ).sum()
+        )
+        expected_wind = float(
+            (
+                self.params.wind_om_cost_cny_per_kw
+                * result["wind_used_mw"]
+                * time_step_h
+                * 1000.0
+            ).sum()
+        )
+        expected_hourly_battery = (
+            self.params.battery_om_cost_cny_per_kw
+            * (result["charge_mw"] + result["discharge_mw"])
+            * time_step_h
+            * 1000.0
+        )
+        expected_battery = float(expected_hourly_battery.sum())
+        expected_operating = (
+            expected_grid
+            + expected_solar
+            + expected_wind
+            + expected_battery
+        )
+
+        self.assertAlmostEqual(
+            metrics["grid_purchase_cost_cny"], expected_grid, places=7
+        )
+        self.assertAlmostEqual(
+            metrics["solar_om_cost_cny"], expected_solar, places=7
+        )
+        self.assertAlmostEqual(
+            metrics["wind_om_cost_cny"], expected_wind, places=7
+        )
+        self.assertEqual(metrics["battery_om_cost_cny"], expected_battery)
+        np.testing.assert_allclose(
+            result["hourly_battery_om_cost_cny"],
+            expected_hourly_battery,
+            rtol=0.0,
+            atol=1e-12,
+        )
+        self.assertAlmostEqual(
+            metrics["operating_cost_cny"], expected_operating, places=7
+        )
+        self.assertAlmostEqual(
+            metrics["primary_operating_cost_cny"],
+            expected_operating,
+            places=7,
+        )
+        self.assertTrue(
+            np.allclose(
+                result["hourly_operating_cost_cny"],
+                result[
+                    [
+                        "hourly_grid_purchase_cost_cny",
+                        "hourly_solar_om_cost_cny",
+                        "hourly_wind_om_cost_cny",
+                        "hourly_battery_om_cost_cny",
+                    ]
+                ].sum(axis=1),
+                rtol=0.0,
+                atol=1e-9,
+            )
+        )
+        self.assertTrue(
+            (self.output_dir / "primary_cost_recompute_primary.lp").is_file()
+        )
+        self.assertIn(
+            "battery_om_cost_expr", build_and_solve.__code__.co_varnames
+        )
+        self.assertIn(
+            "primary_cost_expr", build_and_solve.__code__.co_varnames
+        )
+
+    def test_full_cpu_grid_only_power_matches_approved_scale(self) -> None:
+        cpu_arrival = np.full(24, 0.90)
+        zeros = np.zeros(24)
+        result, _ = self.solve(
+            cpu_arrival=cpu_arrival,
+            solar_available_mw=zeros,
+            wind_available_mw=zeros,
+            enable_renewables=False,
+            case_name="full_cpu_grid_only",
+        )
+
+        np.testing.assert_allclose(result["it_power_mw"], 6.60, atol=1e-9)
+        np.testing.assert_allclose(result["dc_power_mw"], 7.26, atol=1e-9)
+        np.testing.assert_allclose(result["grid_power_mw"], 7.26, atol=1e-9)
+        self.assertLessEqual(
+            float(result["grid_power_mw"].max()),
+            self.params.grid_capacity_mw,
+        )
+
+    def test_renewable_allocation_and_power_balance_hold_hourly(self) -> None:
+        result, _ = self.solve(case_name="renewable_balance")
+
+        np.testing.assert_allclose(
+            result["solar_used_mw"] + result["solar_curtailed_mw"],
+            result["solar_available_mw"],
+            rtol=0.0,
+            atol=1e-9,
+        )
+        np.testing.assert_allclose(
+            result["wind_used_mw"] + result["wind_curtailed_mw"],
+            result["wind_available_mw"],
+            rtol=0.0,
+            atol=1e-9,
+        )
+        np.testing.assert_allclose(
+            result["grid_power_mw"]
+            + result["solar_used_mw"]
+            + result["wind_used_mw"],
+            result["dc_power_mw"],
+            rtol=0.0,
+            atol=1e-9,
+        )
+
+    def test_high_renewables_cause_positive_curtailment(self) -> None:
+        renewable_power = np.full(24, 10.0)
+        result, metrics = self.solve(
+            solar_available_mw=renewable_power,
+            wind_available_mw=renewable_power,
+            case_name="high_renewable_curtailment",
+        )
+
+        self.assertGreater(
+            metrics["renewable_curtailment_energy_mwh"], 0.0
+        )
+        self.assertGreater(
+            float(
+                (
+                    result["solar_curtailed_mw"]
+                    + result["wind_curtailed_mw"]
+                ).sum()
+            ),
+            0.0,
+        )
+        self.assertGreaterEqual(float(result["grid_power_mw"].min()), 0.0)
+
+    def test_infeasible_cpu_capacity_raises_explicit_error(self) -> None:
+        params = replace(self.params, cpu_capacity_pu=0.01)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"infeasible_cpu_capacity.*SCIP 状态",
+        ):
+            self.solve(
+                params=params,
+                enable_renewables=False,
+                case_name="infeasible_cpu_capacity",
+            )
+
+    def test_shift_respects_three_hour_deadline_and_conserves_cpu(self) -> None:
+        cpu_arrival = np.zeros(6)
+        cpu_arrival[0] = 0.5
+        prices = np.array([1.0, 1.0, 1.0, 0.5, 0.01, 0.01])
+        zeros = np.zeros(6)
+        params = replace(self.params, flex_ratio=1.0)
+
+        result, metrics = self.solve(
+            cpu_arrival=cpu_arrival,
+            solar_available_mw=zeros,
+            wind_available_mw=zeros,
+            electricity_price_cny_per_kwh=prices,
+            params=params,
+            enable_shift=True,
+            enable_renewables=False,
+            case_name="three_hour_shift_deadline",
+        )
+
+        self.assertAlmostEqual(result.loc[4, "cpu_scheduled_pu"], 0.0)
+        self.assertAlmostEqual(result.loc[5, "cpu_scheduled_pu"], 0.0)
+        self.assertAlmostEqual(result["cpu_scheduled_pu"].sum(), 0.5)
+        self.assertAlmostEqual(metrics["cpu_conservation_error"], 0.0)
 
 
 if __name__ == "__main__":

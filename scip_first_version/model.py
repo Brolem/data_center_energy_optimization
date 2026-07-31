@@ -12,23 +12,69 @@ from .config import Parameters
 
 def build_and_solve(
     cpu_arrival: np.ndarray,
+    solar_available_mw: np.ndarray,
+    wind_available_mw: np.ndarray,
+    electricity_price_cny_per_kwh: np.ndarray,
     params: Parameters,
     enable_shift: bool,
     enable_storage: bool,
+    enable_renewables: bool,
     case_name: str,
     output_dir: Path,
     show_log: bool,
 ) -> tuple[pd.DataFrame, dict]:
+    profiles: dict[str, np.ndarray] = {}
+    for profile_name, profile_values in (
+        ("cpu_arrival", cpu_arrival),
+        ("solar_available_mw", solar_available_mw),
+        ("wind_available_mw", wind_available_mw),
+        (
+            "electricity_price_cny_per_kwh",
+            electricity_price_cny_per_kwh,
+        ),
+    ):
+        values = np.asarray(profile_values, dtype=float).reshape(-1)
+        if len(values) == 0:
+            raise ValueError(f"{profile_name} 必须为非空数组。")
+        if not np.isfinite(values).all():
+            raise ValueError(f"{profile_name} 必须为有限值。")
+        if (values < 0.0).any():
+            raise ValueError(f"{profile_name} 必须为非负值。")
+        profiles[profile_name] = values
+
+    cpu_arrival = profiles["cpu_arrival"]
     T = len(cpu_arrival)
+    for profile_name in (
+        "solar_available_mw",
+        "wind_available_mw",
+        "electricity_price_cny_per_kwh",
+    ):
+        if len(profiles[profile_name]) != T:
+            raise ValueError(f"{profile_name} 长度必须与 cpu_arrival 一致。")
+
+    if enable_storage:
+        raise NotImplementedError("本阶段不支持储能一级优化。")
+
+    solar_input = profiles["solar_available_mw"]
+    wind_input = profiles["wind_available_mw"]
+    electricity_price_cny_per_kwh = profiles[
+        "electricity_price_cny_per_kwh"
+    ]
+    if enable_renewables:
+        solar_available = solar_input.copy()
+        wind_available = wind_input.copy()
+    else:
+        solar_available = np.zeros(T, dtype=float)
+        wind_available = np.zeros(T, dtype=float)
+
     hours = range(T)
     model = Model(case_name)
     if not show_log:
         model.hideOutput()
-
     model.setParam("limits/time", params.time_limit_s)
     model.setParam("limits/gap", params.relative_gap)
 
-    u = {
+    scheduled_cpu = {
         t: model.addVar(
             lb=0.0,
             ub=params.cpu_capacity_pu,
@@ -38,241 +84,323 @@ def build_and_solve(
         for t in hours
     }
 
-    shift_vars: dict[tuple[int, int], object] = {}
     if enable_shift:
+        shifted_cpu = {}
         for origin in hours:
-            latest = min(origin + params.max_delay_h, T - 1)
-            for target in range(origin, latest + 1):
-                shift_vars[origin, target] = model.addVar(
+            last_target = min(origin + params.max_delay_h, T - 1)
+            for target in range(origin, last_target + 1):
+                shifted_cpu[origin, target] = model.addVar(
                     lb=0.0,
                     vtype="C",
-                    name=f"shift_{origin:02d}_to_{target:02d}",
+                    name=f"shifted_cpu_{origin:02d}_{target:02d}",
                 )
-
-        for origin in hours:
-            latest = min(origin + params.max_delay_h, T - 1)
             model.addCons(
                 quicksum(
-                    shift_vars[origin, target]
-                    for target in range(origin, latest + 1)
+                    shifted_cpu[origin, target]
+                    for target in range(origin, last_target + 1)
                 )
                 == params.flex_ratio * float(cpu_arrival[origin]),
-                name=f"flex_conservation_{origin:02d}",
+                name=f"shift_conservation_{origin:02d}",
             )
 
         for target in hours:
-            eligible_origins = range(max(0, target - params.max_delay_h), target + 1)
+            arrivals_at_target = quicksum(
+                variable
+                for (origin, shifted_target), variable in shifted_cpu.items()
+                if shifted_target == target
+            )
             model.addCons(
-                u[target]
-                == (1.0 - params.flex_ratio) * float(cpu_arrival[target])
-                + quicksum(
-                    shift_vars[origin, target]
-                    for origin in eligible_origins
-                    if (origin, target) in shift_vars
-                ),
+                scheduled_cpu[target]
+                == (1.0 - params.flex_ratio)
+                * float(cpu_arrival[target])
+                + arrivals_at_target,
                 name=f"scheduled_cpu_balance_{target:02d}",
             )
     else:
         for t in hours:
             model.addCons(
-                u[t] == float(cpu_arrival[t]),
+                scheduled_cpu[t] == float(cpu_arrival[t]),
                 name=f"fixed_cpu_{t:02d}",
             )
 
-    p_it = {
-        t: model.addVar(lb=0.0, vtype="C", name=f"p_it_mw_{t:02d}")
+    idle_it_power_mw = params.it_power_mw(0.0)
+    it_power_slope_mw = params.it_power_mw(1.0) - idle_it_power_mw
+    it_power = {
+        t: model.addVar(lb=0.0, vtype="C", name=f"it_power_mw_{t:02d}")
         for t in hours
     }
-    p_dc = {
-        t: model.addVar(lb=0.0, vtype="C", name=f"p_dc_mw_{t:02d}")
+    dc_power = {
+        t: model.addVar(lb=0.0, vtype="C", name=f"dc_power_mw_{t:02d}")
         for t in hours
     }
+    grid_power = {
+        t: model.addVar(
+            lb=0.0,
+            ub=params.grid_capacity_mw,
+            vtype="C",
+            name=f"grid_power_mw_{t:02d}",
+        )
+        for t in hours
+    }
+    solar_used = {
+        t: model.addVar(
+            lb=0.0,
+            ub=float(solar_available[t]),
+            vtype="C",
+            name=f"solar_used_mw_{t:02d}",
+        )
+        for t in hours
+    }
+    solar_curtailed = {
+        t: model.addVar(
+            lb=0.0,
+            ub=float(solar_available[t]),
+            vtype="C",
+            name=f"solar_curtailed_mw_{t:02d}",
+        )
+        for t in hours
+    }
+    wind_used = {
+        t: model.addVar(
+            lb=0.0,
+            ub=float(wind_available[t]),
+            vtype="C",
+            name=f"wind_used_mw_{t:02d}",
+        )
+        for t in hours
+    }
+    wind_curtailed = {
+        t: model.addVar(
+            lb=0.0,
+            ub=float(wind_available[t]),
+            vtype="C",
+            name=f"wind_curtailed_mw_{t:02d}",
+        )
+        for t in hours
+    }
+    charge_power = {t: 0.0 for t in hours}
+    discharge_power = {t: 0.0 for t in hours}
+
     for t in hours:
         model.addCons(
-            p_it[t]
-            == params.it_peak_power_mw
-            * (
-                params.idle_power_ratio
-                + (1.0 - params.idle_power_ratio) * u[t]
-            ),
+            it_power[t]
+            == idle_it_power_mw + it_power_slope_mw * scheduled_cpu[t],
             name=f"it_power_mapping_{t:02d}",
         )
         model.addCons(
-            p_dc[t] == params.pue * p_it[t],
-            name=f"pue_mapping_{t:02d}",
+            dc_power[t] == params.pue * it_power[t],
+            name=f"dc_power_mapping_{t:02d}",
+        )
+        model.addCons(
+            solar_used[t] + solar_curtailed[t]
+            == float(solar_available[t]),
+            name=f"solar_allocation_{t:02d}",
+        )
+        model.addCons(
+            wind_used[t] + wind_curtailed[t]
+            == float(wind_available[t]),
+            name=f"wind_allocation_{t:02d}",
+        )
+        model.addCons(
+            grid_power[t] + solar_used[t] + wind_used[t] == dc_power[t],
+            name=f"power_balance_{t:02d}",
         )
 
-    p_grid = {
-        t: model.addVar(lb=0.0, vtype="C", name=f"p_grid_mw_{t:02d}")
+    grid_purchase_cost = quicksum(
+        float(electricity_price_cny_per_kwh[t])
+        * grid_power[t]
+        * params.time_step_h
+        * 1000.0
         for t in hours
-    }
+    )
+    solar_om_cost = quicksum(
+        params.solar_om_cost_cny_per_kw
+        * solar_used[t]
+        * params.time_step_h
+        * 1000.0
+        for t in hours
+    )
+    wind_om_cost = quicksum(
+        params.wind_om_cost_cny_per_kw
+        * wind_used[t]
+        * params.time_step_h
+        * 1000.0
+        for t in hours
+    )
+    battery_om_cost_expr = quicksum(
+        params.battery_om_cost_cny_per_kw
+        * (charge_power[t] + discharge_power[t])
+        * params.time_step_h
+        * 1000.0
+        for t in hours
+    )
+    primary_cost_expr = (
+        grid_purchase_cost
+        + solar_om_cost
+        + wind_om_cost
+        + battery_om_cost_expr
+    )
+    model.setObjective(primary_cost_expr, "minimize")
 
-    if enable_storage:
-        p_ch = {
-            t: model.addVar(
-                lb=0.0,
-                ub=params.battery_power_mw,
-                vtype="C",
-                name=f"p_charge_mw_{t:02d}",
-            )
-            for t in hours
-        }
-        p_dis = {
-            t: model.addVar(
-                lb=0.0,
-                ub=params.battery_power_mw,
-                vtype="C",
-                name=f"p_discharge_mw_{t:02d}",
-            )
-            for t in hours
-        }
-        charge_mode = {
-            t: model.addVar(vtype="B", name=f"charge_mode_{t:02d}")
-            for t in hours
-        }
-        e_min = params.battery_soc_min * params.battery_energy_mwh
-        e_max = params.battery_soc_max * params.battery_energy_mwh
-        e_initial = params.battery_soc_initial * params.battery_energy_mwh
-        energy = {
-            t: model.addVar(
-                lb=e_min,
-                ub=e_max,
-                vtype="C",
-                name=f"energy_mwh_{t:02d}",
-            )
-            for t in range(T + 1)
-        }
-        model.addCons(energy[0] == e_initial, name="initial_energy")
-        model.addCons(energy[T] == e_initial, name="terminal_energy")
-
-        for t in hours:
-            model.addCons(
-                p_ch[t] <= params.battery_power_mw * charge_mode[t],
-                name=f"charge_exclusive_{t:02d}",
-            )
-            model.addCons(
-                p_dis[t]
-                <= params.battery_power_mw * (1 - charge_mode[t]),
-                name=f"discharge_exclusive_{t:02d}",
-            )
-            model.addCons(
-                energy[t + 1]
-                == energy[t]
-                + params.charge_efficiency
-                * p_ch[t]
-                * params.time_step_h
-                - p_dis[t]
-                * params.time_step_h
-                / params.discharge_efficiency,
-                name=f"energy_balance_{t:02d}",
-            )
-            model.addCons(
-                p_grid[t] == p_dc[t] + p_ch[t] - p_dis[t],
-                name=f"grid_balance_{t:02d}",
-            )
-    else:
-        p_ch = {}
-        p_dis = {}
-        energy = {}
-        for t in hours:
-            model.addCons(
-                p_grid[t] == p_dc[t],
-                name=f"grid_without_storage_{t:02d}",
-            )
-
-    ramp = {
-        t: model.addVar(lb=0.0, vtype="C", name=f"absolute_ramp_{t:02d}")
-        for t in range(1, T)
-    }
-    for t in range(1, T):
-        model.addCons(
-            ramp[t] >= p_grid[t] - p_grid[t - 1],
-            name=f"ramp_positive_{t:02d}",
-        )
-        model.addCons(
-            ramp[t] >= p_grid[t - 1] - p_grid[t],
-            name=f"ramp_negative_{t:02d}",
-        )
-
-    objective = quicksum(ramp[t] for t in range(1, T))
-    if enable_storage:
-        objective += params.throughput_tiebreaker * quicksum(
-            p_ch[t] + p_dis[t] for t in hours
-        )
-    model.setObjective(objective, "minimize")
-    model.writeProblem(str(output_dir / f"{case_name}.lp"))
+    output_dir = Path(output_dir)
+    model.writeProblem(str(output_dir / f"{case_name}_primary.lp"))
     model.optimize()
 
     status = str(model.getStatus())
     if model.getNSols() == 0:
         raise RuntimeError(f"{case_name} 未找到可行解，SCIP 状态: {status}")
 
-    scheduled = np.array([model.getVal(u[t]) for t in hours])
-    it_power = np.array([model.getVal(p_it[t]) for t in hours])
-    dc_power = np.array([model.getVal(p_dc[t]) for t in hours])
-    grid_power = np.array([model.getVal(p_grid[t]) for t in hours])
-
-    if enable_storage:
-        charge = np.array([model.getVal(p_ch[t]) for t in hours])
-        discharge = np.array([model.getVal(p_dis[t]) for t in hours])
-        soc = np.array(
-            [
-                model.getVal(energy[t]) / params.battery_energy_mwh
-                for t in range(T + 1)
-            ]
-        )
-    else:
-        charge = np.zeros(T)
-        discharge = np.zeros(T)
-        soc = np.full(T + 1, np.nan)
-
     result = pd.DataFrame(
         {
             "case": case_name,
-            "hour": np.arange(T),
+            "hour": np.arange(T, dtype=int),
             "cpu_arrival_pu": cpu_arrival,
-            "cpu_scheduled_pu": scheduled,
-            "it_power_mw": it_power,
-            "dc_power_mw": dc_power,
-            "charge_mw": charge,
-            "discharge_mw": discharge,
-            "grid_power_mw": grid_power,
-            "soc_start": soc[:-1],
-            "soc_end": soc[1:],
+            "cpu_scheduled_pu": np.array(
+                [model.getVal(scheduled_cpu[t]) for t in hours]
+            ),
+            "it_power_mw": np.array(
+                [model.getVal(it_power[t]) for t in hours]
+            ),
+            "dc_power_mw": np.array(
+                [model.getVal(dc_power[t]) for t in hours]
+            ),
+            "grid_power_mw": np.array(
+                [model.getVal(grid_power[t]) for t in hours]
+            ),
+            "solar_available_mw": solar_available,
+            "solar_used_mw": np.array(
+                [model.getVal(solar_used[t]) for t in hours]
+            ),
+            "solar_curtailed_mw": np.array(
+                [model.getVal(solar_curtailed[t]) for t in hours]
+            ),
+            "wind_available_mw": wind_available,
+            "wind_used_mw": np.array(
+                [model.getVal(wind_used[t]) for t in hours]
+            ),
+            "wind_curtailed_mw": np.array(
+                [model.getVal(wind_curtailed[t]) for t in hours]
+            ),
+            "charge_mw": np.array(
+                [charge_power[t] for t in hours], dtype=float
+            ),
+            "discharge_mw": np.array(
+                [discharge_power[t] for t in hours], dtype=float
+            ),
+            "soc_start": np.full(T, params.battery_soc_initial, dtype=float),
+            "soc_end": np.full(T, params.battery_soc_initial, dtype=float),
+            "electricity_price_cny_per_kwh": (
+                electricity_price_cny_per_kwh
+            ),
         }
     )
 
-    differences = np.diff(grid_power)
-    finite_gap = float(model.getGap())
-    if not math.isfinite(finite_gap):
-        finite_gap = np.nan
+    result["hourly_grid_purchase_cost_cny"] = (
+        result["electricity_price_cny_per_kwh"]
+        * result["grid_power_mw"]
+        * params.time_step_h
+        * 1000.0
+    )
+    result["hourly_solar_om_cost_cny"] = (
+        params.solar_om_cost_cny_per_kw
+        * result["solar_used_mw"]
+        * params.time_step_h
+        * 1000.0
+    )
+    result["hourly_wind_om_cost_cny"] = (
+        params.wind_om_cost_cny_per_kw
+        * result["wind_used_mw"]
+        * params.time_step_h
+        * 1000.0
+    )
+    result["hourly_battery_om_cost_cny"] = (
+        params.battery_om_cost_cny_per_kw
+        * (result["charge_mw"] + result["discharge_mw"])
+        * params.time_step_h
+        * 1000.0
+    )
+    result["hourly_operating_cost_cny"] = result[
+        [
+            "hourly_grid_purchase_cost_cny",
+            "hourly_solar_om_cost_cny",
+            "hourly_wind_om_cost_cny",
+            "hourly_battery_om_cost_cny",
+        ]
+    ].sum(axis=1)
+
+    grid_purchase_cost_value = float(
+        result["hourly_grid_purchase_cost_cny"].sum()
+    )
+    solar_om_cost_value = float(result["hourly_solar_om_cost_cny"].sum())
+    wind_om_cost_value = float(result["hourly_wind_om_cost_cny"].sum())
+    battery_om_cost_value = float(
+        result["hourly_battery_om_cost_cny"].sum()
+    )
+    operating_cost_value = (
+        grid_purchase_cost_value
+        + solar_om_cost_value
+        + wind_om_cost_value
+        + battery_om_cost_value
+    )
+    renewable_available_energy = float(
+        (
+            result["solar_available_mw"]
+            + result["wind_available_mw"]
+        ).sum()
+        * params.time_step_h
+    )
+    renewable_used_energy = float(
+        (result["solar_used_mw"] + result["wind_used_mw"]).sum()
+        * params.time_step_h
+    )
+    renewable_curtailment_energy = float(
+        (
+            result["solar_curtailed_mw"]
+            + result["wind_curtailed_mw"]
+        ).sum()
+        * params.time_step_h
+    )
+    renewable_curtailment_rate = (
+        100.0
+        * renewable_curtailment_energy
+        / renewable_available_energy
+        if renewable_available_energy > 0.0
+        else 0.0
+    )
+    mip_gap = float(model.getGap())
+    if not math.isfinite(mip_gap):
+        mip_gap = np.nan
+
     metrics = {
         "case": case_name,
+        "status": status,
         "shift_enabled": enable_shift,
         "storage_enabled": enable_storage,
-        "status": status,
-        "total_variation_mw": float(np.abs(differences).sum()),
-        "max_ramp_mw": float(np.abs(differences).max()),
-        "peak_grid_power_mw": float(grid_power.max()),
-        "mean_grid_power_mw": float(grid_power.mean()),
-        "std_grid_power_mw": float(grid_power.std(ddof=0)),
-        "grid_energy_mwh": float(grid_power.sum() * params.time_step_h),
+        "renewables_enabled": enable_renewables,
+        "grid_purchase_cost_cny": grid_purchase_cost_value,
+        "solar_om_cost_cny": solar_om_cost_value,
+        "wind_om_cost_cny": wind_om_cost_value,
+        "battery_om_cost_cny": battery_om_cost_value,
+        "operating_cost_cny": operating_cost_value,
+        "grid_purchase_energy_mwh": float(
+            result["grid_power_mw"].sum() * params.time_step_h
+        ),
+        "grid_peak_power_mw": float(result["grid_power_mw"].max()),
+        "grid_mean_power_mw": float(result["grid_power_mw"].mean()),
+        "renewable_available_energy_mwh": renewable_available_energy,
+        "renewable_used_energy_mwh": renewable_used_energy,
+        "renewable_curtailment_energy_mwh": (
+            renewable_curtailment_energy
+        ),
+        "renewable_curtailment_rate_pct": renewable_curtailment_rate,
         "cpu_conservation_error": float(
-            abs(scheduled.sum() - cpu_arrival.sum())
-        ),
-        "soc_cycle_error": (
-            float(abs(soc[-1] - soc[0])) if enable_storage else np.nan
-        ),
-        "max_simultaneous_charge_discharge_mw": (
-            float(np.minimum(charge, discharge).max())
-            if enable_storage
-            else 0.0
+            abs(
+                result["cpu_scheduled_pu"].sum()
+                - result["cpu_arrival_pu"].sum()
+            )
         ),
         "solve_time_s": float(model.getSolvingTime()),
-        "mip_gap": float(finite_gap),
-        "nodes": int(model.getNNodes()),
-        "variables": int(model.getNVars()),
-        "constraints": int(model.getNConss()),
-        "scip_objective": float(model.getObjVal()),
+        "mip_gap": mip_gap,
+        "primary_operating_cost_cny": operating_cost_value,
     }
     return result, metrics
