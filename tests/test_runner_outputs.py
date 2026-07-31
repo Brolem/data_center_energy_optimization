@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,7 +14,15 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from run_first_version import _archive_source_files, main, parse_args
+import run_first_version
+from run_first_version import (
+    _archive_source_files,
+    _generated_output_names,
+    _publish_staged_outputs,
+    _validate_archive_targets,
+    main,
+    parse_args,
+)
 from scip_first_version.config import Parameters
 from scip_first_version.reporting import make_plots
 
@@ -47,6 +57,14 @@ PLOT_SIZES = {
     "operating_cost_comparison.png": (1800, 1050),
 }
 MIN_SERIES_PIXELS = 100
+
+
+def _flat_file_hashes(directory: Path) -> dict[str, str]:
+    return {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in directory.iterdir()
+        if path.is_file()
+    }
 
 
 def _zero_plot_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -162,8 +180,9 @@ class RunnerOutputTests(unittest.TestCase):
             input_path = input_dir / "shared.csv"
             weather_path = weather_dir / "shared.csv"
             scenario_path = root / "scenario.csv"
-            for path in (input_path, weather_path, scenario_path):
-                path.write_text("placeholder\n", encoding="utf-8")
+            input_path.write_bytes(INPUT_PATH.read_bytes())
+            weather_path.write_bytes(WEATHER_SOURCE_PATH.read_bytes())
+            scenario_path.write_bytes(SCENARIO_PATH.read_bytes())
             arguments = [
                 "run_first_version.py",
                 "--input",
@@ -188,6 +207,7 @@ class RunnerOutputTests(unittest.TestCase):
             self.assertIn("shared.csv", message)
             self.assertIn(str(input_path.resolve()), message)
             self.assertIn(str(weather_path.resolve()), message)
+            self.assertFalse((root / "outputs").exists())
 
     @unittest.skipUnless(os.name == "nt", "requires Windows path semantics")
     def test_source_archive_rejects_case_only_target_collision(
@@ -214,9 +234,512 @@ class RunnerOutputTests(unittest.TestCase):
 
             self.assertEqual(list(output_dir.iterdir()), [])
 
+    def test_generated_output_names_reject_legal_source_archives(self) -> None:
+        expected_names = {
+            "all_days_hourly.csv",
+            "model_input_typical_day.csv",
+            "hourly_case_results.csv",
+            "case_metrics.csv",
+            "run_metadata.json",
+            *(
+                f"{case}_{stage}.lp"
+                for case in CASE_ORDER
+                for stage in ("primary", "secondary")
+            ),
+            *PLOT_FILES,
+        }
+        self.assertEqual(_generated_output_names(), expected_names)
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source_dir = root / "sources"
+            output_dir = root / "outputs"
+            source_dir.mkdir()
+            valid_google_input = INPUT_PATH.read_bytes()
+            for reserved_name in sorted(expected_names):
+                source_path = source_dir / reserved_name
+                source_path.write_bytes(valid_google_input)
+                with self.subTest(reserved_name=reserved_name):
+                    with self.assertRaises(ValueError) as context:
+                        _validate_archive_targets(
+                            [source_path],
+                            output_dir,
+                        )
+                    message = str(context.exception)
+                    self.assertIn(str(source_path.resolve()), message)
+                    self.assertIn(reserved_name, message)
+
+    def test_reserved_name_input_in_output_dir_is_rejected_unchanged(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            output_dir = root / "outputs"
+            output_dir.mkdir()
+            input_path = output_dir / "case_metrics.csv"
+            input_path.write_bytes(INPUT_PATH.read_bytes())
+            (output_dir / "hourly_case_results.csv").write_bytes(
+                b"old hourly results\n"
+            )
+            (output_dir / "unknown-sentinel.bin").write_bytes(
+                b"unknown sentinel\x00\xff"
+            )
+            before = _flat_file_hashes(output_dir)
+            arguments = [
+                "run_first_version.py",
+                "--input",
+                str(input_path),
+                "--weather-source",
+                str(WEATHER_SOURCE_PATH),
+                "--energy-scenario",
+                str(SCENARIO_PATH),
+                "--output-dir",
+                str(output_dir),
+            ]
+
+            with (
+                patch("sys.argv", arguments),
+                patch("run_first_version.build_and_solve") as solve,
+                self.assertRaises(ValueError) as context,
+            ):
+                main()
+
+            solve.assert_not_called()
+            message = str(context.exception)
+            self.assertIn(str(input_path.resolve()), message)
+            self.assertIn("case_metrics.csv", message)
+            self.assertEqual(_flat_file_hashes(output_dir), before)
+            self.assertEqual(list(root.glob(".day-ahead-staging-*")), [])
+            self.assertEqual(list(root.glob(".day-ahead-backup-*")), [])
+
+    def test_all_days_hourly_named_input_is_rejected_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            output_dir = root / "outputs"
+            output_dir.mkdir()
+            input_path = output_dir / "all_days_hourly.csv"
+            input_path.write_bytes(INPUT_PATH.read_bytes())
+            (output_dir / "case_metrics.csv").write_bytes(b"old metrics\n")
+            (output_dir / "unknown-sentinel.bin").write_bytes(
+                b"unknown sentinel\x00\xff"
+            )
+            before = _flat_file_hashes(output_dir)
+            arguments = [
+                "run_first_version.py",
+                "--input",
+                str(input_path),
+                "--weather-source",
+                str(WEATHER_SOURCE_PATH),
+                "--energy-scenario",
+                str(SCENARIO_PATH),
+                "--output-dir",
+                str(output_dir),
+            ]
+
+            with (
+                patch("sys.argv", arguments),
+                patch("run_first_version.build_and_solve") as solve,
+                self.assertRaises(ValueError) as context,
+            ):
+                main()
+
+            solve.assert_not_called()
+            message = str(context.exception)
+            self.assertIn(str(input_path.resolve()), message)
+            self.assertIn("all_days_hourly.csv", message)
+            self.assertEqual(_flat_file_hashes(output_dir), before)
+            self.assertEqual(list(root.glob(".day-ahead-staging-*")), [])
+            self.assertEqual(list(root.glob(".day-ahead-backup-*")), [])
+
+    def test_invalid_day_preserves_all_existing_output_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            output_dir = root / "outputs"
+            output_dir.mkdir()
+            for filename, content in {
+                "case_metrics.csv": b"old metrics\n",
+                INPUT_PATH.name: b"old archived input\n",
+                "unknown-sentinel.bin": b"unknown sentinel\x00\xff",
+            }.items():
+                (output_dir / filename).write_bytes(content)
+            before = _flat_file_hashes(output_dir)
+            arguments = [
+                "run_first_version.py",
+                "--input",
+                str(INPUT_PATH),
+                "--weather-source",
+                str(WEATHER_SOURCE_PATH),
+                "--energy-scenario",
+                str(SCENARIO_PATH),
+                "--output-dir",
+                str(output_dir),
+                "--day",
+                "29",
+            ]
+
+            with (
+                patch("sys.argv", arguments),
+                patch("sys.stdout", new_callable=io.StringIO) as stdout,
+                self.assertRaises(ValueError),
+            ):
+                main()
+
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertEqual(_flat_file_hashes(output_dir), before)
+
+    def test_first_csv_failure_immediately_cleans_staging_with_traceback(
+        self,
+    ) -> None:
+        retained_exception = None
+        retained_traceback = None
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            output_dir = root / "outputs"
+            output_dir.mkdir()
+            (output_dir / "case_metrics.csv").write_bytes(b"old metrics\n")
+            (output_dir / "unknown-sentinel.bin").write_bytes(
+                b"unknown sentinel\x00\xff"
+            )
+            before = _flat_file_hashes(output_dir)
+            arguments = [
+                "run_first_version.py",
+                "--output-dir",
+                str(output_dir),
+            ]
+
+            try:
+                with (
+                    patch("sys.argv", arguments),
+                    patch.object(
+                        pd.DataFrame,
+                        "to_csv",
+                        side_effect=OSError("injected first CSV failure"),
+                    ),
+                    patch("run_first_version.build_and_solve") as solve,
+                ):
+                    main()
+            except OSError as error:
+                retained_exception = error
+                retained_traceback = error.__traceback__
+            else:
+                self.fail("OSError not raised")
+
+            self.assertEqual(
+                str(retained_exception),
+                "injected first CSV failure",
+            )
+            self.assertIsNotNone(retained_traceback)
+            solve.assert_not_called()
+            self.assertEqual(_flat_file_hashes(output_dir), before)
+            self.assertEqual(list(root.glob(".day-ahead-staging-*")), [])
+            self.assertEqual(list(root.glob(".day-ahead-backup-*")), [])
+
+        retained_exception = None
+        retained_traceback = None
+
+    def test_second_case_failure_preserves_outputs_and_cleans_staging(
+        self,
+    ) -> None:
+        real_build_and_solve = run_first_version.build_and_solve
+        call_count = 0
+
+        def fail_on_second_case(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise RuntimeError("injected second-case failure")
+            return real_build_and_solve(*args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            output_dir = root / "outputs"
+            output_dir.mkdir()
+            for filename, content in {
+                "case_metrics.csv": b"old metrics\n",
+                "grid_only_primary.lp": b"old primary LP\n",
+                "unknown-sentinel.bin": b"unknown sentinel\x00\xff",
+            }.items():
+                (output_dir / filename).write_bytes(content)
+            before = _flat_file_hashes(output_dir)
+            arguments = [
+                "run_first_version.py",
+                "--output-dir",
+                str(output_dir),
+            ]
+
+            with (
+                patch("sys.argv", arguments),
+                patch(
+                    "run_first_version.build_and_solve",
+                    side_effect=fail_on_second_case,
+                ),
+                patch("sys.stdout", new_callable=io.StringIO) as stdout,
+                self.assertRaisesRegex(
+                    RuntimeError,
+                    "injected second-case failure",
+                ),
+            ):
+                main()
+
+            self.assertEqual(call_count, 2)
+            self.assertNotIn('"model_type"', stdout.getvalue())
+            self.assertNotIn("Operating cost metrics:", stdout.getvalue())
+            self.assertEqual(_flat_file_hashes(output_dir), before)
+            self.assertEqual(list(root.glob(".day-ahead-staging-*")), [])
+            self.assertEqual(list(root.glob(".day-ahead-backup-*")), [])
+
+    def test_publish_failure_rolls_back_replaced_files(self) -> None:
+        real_replace = os.replace
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            staging_dir = root / "staging"
+            output_dir = root / "outputs"
+            staging_dir.mkdir()
+            output_dir.mkdir()
+            (staging_dir / "a.csv").write_bytes(b"new a\n")
+            (staging_dir / "b.csv").write_bytes(b"new b\n")
+            (output_dir / "a.csv").write_bytes(b"old a\n")
+            (output_dir / "b.csv").write_bytes(b"old b\n")
+            (output_dir / "unknown.bin").write_bytes(b"unknown\x00\xff")
+            before = _flat_file_hashes(output_dir)
+
+            def fail_on_second_publish(source, target):
+                source_path = Path(source)
+                if (
+                    source_path.parent == staging_dir
+                    and source_path.name == "b.csv"
+                ):
+                    raise OSError("injected publish failure")
+                return real_replace(source, target)
+
+            with (
+                patch(
+                    "run_first_version.os.replace",
+                    side_effect=fail_on_second_publish,
+                ),
+                self.assertRaisesRegex(OSError, "injected publish failure"),
+            ):
+                _publish_staged_outputs(staging_dir, output_dir)
+
+            self.assertEqual(_flat_file_hashes(output_dir), before)
+            self.assertEqual(list(root.glob(".day-ahead-backup-*")), [])
+
+    @unittest.skipUnless(os.name == "nt", "requires Windows attributes")
+    def test_publish_rollback_removes_readonly_new_file(self) -> None:
+        real_replace = os.replace
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            staging_dir = root / "staging"
+            output_dir = root / "outputs"
+            staging_dir.mkdir()
+            output_dir.mkdir()
+            staged_first = staging_dir / "a.csv"
+            staged_first.write_bytes(b"readonly new a\n")
+            staged_first.chmod(stat.S_IREAD)
+            (staging_dir / "b.csv").write_bytes(b"new b\n")
+            (output_dir / "a.csv").write_bytes(b"old a\n")
+            (output_dir / "b.csv").write_bytes(b"old b\n")
+            (output_dir / "unknown.bin").write_bytes(b"unknown\x00\xff")
+            before = _flat_file_hashes(output_dir)
+            readonly_before = {
+                path.name: bool(
+                    path.stat().st_file_attributes
+                    & stat.FILE_ATTRIBUTE_READONLY
+                )
+                for path in output_dir.iterdir()
+            }
+
+            def fail_on_second_publish(source, target):
+                source_path = Path(source)
+                if (
+                    source_path.parent == staging_dir
+                    and source_path.name == "b.csv"
+                ):
+                    raise OSError("injected readonly publish failure")
+                return real_replace(source, target)
+
+            with (
+                patch(
+                    "run_first_version.os.replace",
+                    side_effect=fail_on_second_publish,
+                ),
+                self.assertRaisesRegex(
+                    OSError,
+                    "injected readonly publish failure",
+                ),
+            ):
+                _publish_staged_outputs(staging_dir, output_dir)
+
+            self.assertEqual(_flat_file_hashes(output_dir), before)
+            self.assertEqual(
+                {
+                    path.name: bool(
+                        path.stat().st_file_attributes
+                        & stat.FILE_ATTRIBUTE_READONLY
+                    )
+                    for path in output_dir.iterdir()
+                },
+                readonly_before,
+            )
+            self.assertEqual(list(root.glob(".day-ahead-backup-*")), [])
+
+    @unittest.skipUnless(os.name == "nt", "requires Windows attributes")
+    def test_publish_rollback_restores_readonly_old_target(self) -> None:
+        real_replace = os.replace
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            staging_dir = root / "staging"
+            output_dir = root / "outputs"
+            staging_dir.mkdir()
+            output_dir.mkdir()
+            (staging_dir / "a.csv").write_bytes(b"new a\n")
+            (staging_dir / "b.csv").write_bytes(b"new b\n")
+            old_target = output_dir / "a.csv"
+            old_target.write_bytes(b"readonly old a\n")
+            old_target.chmod(stat.S_IREAD)
+            (output_dir / "b.csv").write_bytes(b"old b\n")
+            (output_dir / "unknown.bin").write_bytes(b"unknown\x00\xff")
+            before = _flat_file_hashes(output_dir)
+
+            def fail_on_second_publish(source, target):
+                source_path = Path(source)
+                if (
+                    source_path.parent == staging_dir
+                    and source_path.name == "b.csv"
+                ):
+                    raise OSError("injected readonly target failure")
+                return real_replace(source, target)
+
+            with (
+                patch(
+                    "run_first_version.os.replace",
+                    side_effect=fail_on_second_publish,
+                ),
+                self.assertRaisesRegex(
+                    OSError,
+                    "injected readonly target failure",
+                ),
+            ):
+                _publish_staged_outputs(staging_dir, output_dir)
+
+            self.assertEqual(_flat_file_hashes(output_dir), before)
+            self.assertTrue(
+                old_target.stat().st_file_attributes
+                & stat.FILE_ATTRIBUTE_READONLY
+            )
+            self.assertEqual(
+                (output_dir / "unknown.bin").read_bytes(),
+                b"unknown\x00\xff",
+            )
+            self.assertEqual(list(root.glob(".day-ahead-backup-*")), [])
+
+    def test_publish_restore_failure_preserves_backup_directory(self) -> None:
+        real_replace = os.replace
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            staging_dir = root / "staging"
+            output_dir = root / "outputs"
+            staging_dir.mkdir()
+            output_dir.mkdir()
+            (staging_dir / "a.csv").write_bytes(b"new a\n")
+            (staging_dir / "b.csv").write_bytes(b"new b\n")
+            (output_dir / "a.csv").write_bytes(b"old a\n")
+            (output_dir / "b.csv").write_bytes(b"old b\n")
+            (output_dir / "unknown.bin").write_bytes(b"unknown\x00\xff")
+
+            def fail_publish_and_restore(source, target):
+                source_path = Path(source)
+                if (
+                    source_path.parent == staging_dir
+                    and source_path.name == "b.csv"
+                ):
+                    raise OSError("injected publish failure")
+                if (
+                    source_path.parent.name.startswith(
+                        ".day-ahead-backup-"
+                    )
+                    and source_path.name == "a.csv"
+                ):
+                    raise OSError("injected restore failure")
+                return real_replace(source, target)
+
+            with (
+                patch(
+                    "run_first_version.os.replace",
+                    side_effect=fail_publish_and_restore,
+                ),
+                self.assertRaises(RuntimeError) as context,
+            ):
+                _publish_staged_outputs(staging_dir, output_dir)
+
+            backup_directories = list(
+                root.glob(".day-ahead-backup-*")
+            )
+            self.assertEqual(len(backup_directories), 1)
+            backup_dir = backup_directories[0]
+            self.assertIn(str(backup_dir), str(context.exception))
+            self.assertEqual(
+                (backup_dir / "a.csv").read_bytes(),
+                b"old a\n",
+            )
+            self.assertEqual(
+                (output_dir / "unknown.bin").read_bytes(),
+                b"unknown\x00\xff",
+            )
+
+    def test_plot_failure_preserves_outputs_and_cleans_staging(self) -> None:
+        def fail_after_partial_plot_write(
+            all_results,
+            metrics,
+            plot_output_dir,
+        ) -> None:
+            del all_results, metrics
+            plot_output_dir.mkdir(parents=True, exist_ok=True)
+            (plot_output_dir / PLOT_FILES[0]).write_bytes(b"partial plot")
+            raise RuntimeError("injected plot failure")
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            output_dir = root / "outputs"
+            output_dir.mkdir()
+            (output_dir / "case_metrics.csv").write_bytes(b"old metrics\n")
+            (output_dir / "unknown-sentinel.bin").write_bytes(
+                b"unknown sentinel\x00\xff"
+            )
+            before = _flat_file_hashes(output_dir)
+            arguments = [
+                "run_first_version.py",
+                "--output-dir",
+                str(output_dir),
+            ]
+
+            with (
+                patch("sys.argv", arguments),
+                patch(
+                    "run_first_version.make_plots",
+                    side_effect=fail_after_partial_plot_write,
+                ),
+                patch("sys.stdout", new_callable=io.StringIO) as stdout,
+                self.assertRaisesRegex(
+                    RuntimeError,
+                    "injected plot failure",
+                ),
+            ):
+                main()
+
+            self.assertNotIn('"model_type"', stdout.getvalue())
+            self.assertNotIn("Operating cost metrics:", stdout.getvalue())
+            self.assertEqual(_flat_file_hashes(output_dir), before)
+            self.assertEqual(list(root.glob(".day-ahead-staging-*")), [])
+            self.assertEqual(list(root.glob(".day-ahead-backup-*")), [])
+
     def test_default_cli_generates_deterministic_day_ahead_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_dir = Path(temporary_directory) / "results"
+            output_dir.mkdir()
+            unknown_path = output_dir / "unknown-sentinel.bin"
+            unknown_content = b"unknown sentinel\x00\xff"
+            unknown_path.write_bytes(unknown_content)
             arguments = [
                 "run_first_version.py",
                 "--output-dir",
@@ -229,6 +752,7 @@ class RunnerOutputTests(unittest.TestCase):
                 main()
 
             self.assertTrue(stdout.getvalue().isascii())
+            self.assertEqual(unknown_path.read_bytes(), unknown_content)
             model_input = pd.read_csv(
                 output_dir / "model_input_typical_day.csv"
             )
@@ -400,6 +924,17 @@ class RunnerOutputTests(unittest.TestCase):
             )
             for filename in required_files:
                 self.assertTrue((output_dir / filename).is_file(), filename)
+            for source_path in (
+                INPUT_PATH,
+                WEATHER_SOURCE_PATH,
+                SCENARIO_PATH,
+            ):
+                self.assertEqual(
+                    hashlib.sha256(source_path.read_bytes()).digest(),
+                    hashlib.sha256(
+                        (output_dir / source_path.name).read_bytes()
+                    ).digest(),
+                )
 
             self.assertEqual(
                 sorted(path.name for path in output_dir.glob("*.png")),
