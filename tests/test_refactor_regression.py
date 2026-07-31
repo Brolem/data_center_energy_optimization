@@ -6,8 +6,15 @@ from pathlib import Path
 
 import numpy as np
 
+import run_first_version
+import scip_first_version
 from scip_first_version.config import Parameters
-from scip_first_version.data import load_and_prepare, load_energy_scenario
+from scip_first_version.data import (
+    build_provisional_energy_scenario,
+    load_and_prepare,
+    load_energy_scenario,
+    load_phoenix_weather_source,
+)
 from scip_first_version.model import build_and_solve
 
 
@@ -37,6 +44,33 @@ class RefactorRegressionTests(unittest.TestCase):
         self.assertEqual(len(self.hourly), 28 * 24)
         self.assertEqual(self.representative_day, 8)
         self.assertEqual(self.stress_day, 28)
+
+    def test_entrypoints_reexport_public_interfaces(self) -> None:
+        runner_exports = {
+            "Parameters": Parameters,
+            "load_and_prepare": load_and_prepare,
+            "load_energy_scenario": load_energy_scenario,
+            "build_and_solve": build_and_solve,
+            "make_plots": run_first_version.make_plots,
+            "main": run_first_version.main,
+        }
+        package_exports = {
+            "Parameters": Parameters,
+            "build_provisional_energy_scenario": (
+                build_provisional_energy_scenario
+            ),
+            "load_phoenix_weather_source": load_phoenix_weather_source,
+            "load_energy_scenario": load_energy_scenario,
+            "load_and_prepare": load_and_prepare,
+            "build_and_solve": build_and_solve,
+        }
+
+        self.assertEqual(set(run_first_version.__all__), set(runner_exports))
+        self.assertEqual(set(scip_first_version.__all__), set(package_exports))
+        for name, exported_object in runner_exports.items():
+            self.assertIs(getattr(run_first_version, name), exported_object)
+        for name, exported_object in package_exports.items():
+            self.assertIs(getattr(scip_first_version, name), exported_object)
 
     def test_default_five_cases_satisfy_core_constraints(self) -> None:
         selected = self.hourly[
