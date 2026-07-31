@@ -8,10 +8,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import pandas as pd
+from PIL import Image
 
 from run_first_version import _archive_source_files, main, parse_args
 from scip_first_version.config import Parameters
+from scip_first_version.reporting import make_plots
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -29,9 +32,84 @@ CASE_ORDER = [
     "renewables_storage",
     "joint",
 ]
+PLOT_FILES = [
+    "day_ahead_power_results.png",
+    "compute_scheduling_results.png",
+    "battery_operation_results.png",
+    "renewable_dispatch_results.png",
+    "operating_cost_comparison.png",
+]
+PLOT_SIZES = {
+    "day_ahead_power_results.png": (1800, 1120),
+    "compute_scheduling_results.png": (1800, 820),
+    "battery_operation_results.png": (1800, 1120),
+    "renewable_dispatch_results.png": (1800, 820),
+    "operating_cost_comparison.png": (1800, 1050),
+}
+MIN_SERIES_PIXELS = 100
+
+
+def _zero_plot_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:
+    hourly_rows = []
+    for case_name in CASE_ORDER:
+        for hour in range(24):
+            hourly_rows.append(
+                {
+                    "case": case_name,
+                    "hour": hour,
+                    "cpu_arrival_pu": 0.0,
+                    "cpu_scheduled_pu": 0.0,
+                    "dc_power_mw": 0.0,
+                    "grid_power_mw": 0.0,
+                    "solar_available_mw": 0.0,
+                    "solar_used_mw": 0.0,
+                    "solar_curtailed_mw": 0.0,
+                    "wind_available_mw": 0.0,
+                    "wind_used_mw": 0.0,
+                    "wind_curtailed_mw": 0.0,
+                    "charge_mw": 0.0,
+                    "discharge_mw": 0.0,
+                    "soc_start": 0.0,
+                    "soc_end": 0.0,
+                }
+            )
+    metrics = pd.DataFrame(
+        {
+            "case": CASE_ORDER,
+            "grid_purchase_cost_cny": 0.0,
+            "solar_om_cost_cny": 0.0,
+            "wind_om_cost_cny": 0.0,
+            "battery_om_cost_cny": 0.0,
+        }
+    )
+    return pd.DataFrame(hourly_rows), metrics
+
+
+def _count_exact_color(
+    image: Image.Image,
+    color: tuple[int, int, int],
+    box: tuple[int, int, int, int] | None = None,
+) -> int:
+    target = image.crop(box) if box is not None else image
+    pixels = np.asarray(target)
+    return int(np.all(pixels == np.asarray(color), axis=2).sum())
 
 
 class RunnerOutputTests(unittest.TestCase):
+    def assert_plot_has_color(
+        self,
+        image: Image.Image,
+        color: tuple[int, int, int],
+        label: str,
+        *,
+        box: tuple[int, int, int, int] | None = None,
+    ) -> None:
+        self.assertGreaterEqual(
+            _count_exact_color(image, color, box),
+            MIN_SERIES_PIXELS,
+            label,
+        )
+
     def test_cli_defaults_target_deterministic_day_ahead_inputs(self) -> None:
         with patch("sys.argv", ["run_first_version.py"]):
             arguments = parse_args()
@@ -146,12 +224,10 @@ class RunnerOutputTests(unittest.TestCase):
             ]
             with (
                 patch("sys.argv", arguments),
-                patch("run_first_version.make_plots") as make_plots,
                 patch("sys.stdout", new_callable=io.StringIO) as stdout,
             ):
                 main()
 
-            make_plots.assert_called_once()
             self.assertTrue(stdout.getvalue().isascii())
             model_input = pd.read_csv(
                 output_dir / "model_input_typical_day.csv"
@@ -324,6 +400,185 @@ class RunnerOutputTests(unittest.TestCase):
             )
             for filename in required_files:
                 self.assertTrue((output_dir / filename).is_file(), filename)
+
+            self.assertEqual(
+                sorted(path.name for path in output_dir.glob("*.png")),
+                sorted(PLOT_FILES),
+            )
+            for filename in PLOT_FILES:
+                plot_path = output_dir / filename
+                self.assertGreater(plot_path.stat().st_size, 0, filename)
+                with Image.open(plot_path) as image:
+                    self.assertEqual(image.size, PLOT_SIZES[filename])
+                    self.assertEqual(image.mode, "RGB")
+                    image.verify()
+
+            with Image.open(
+                output_dir / "day_ahead_power_results.png"
+            ) as power_plot:
+                joint_color = (220, 38, 38)
+                power_boxes = [
+                    (121, 207, 861, 545),
+                    (1001, 207, 1741, 545),
+                    (121, 722, 861, 1040),
+                    (1001, 722, 1741, 1040),
+                ]
+                for label, box in zip(
+                    ("DC", "grid", "solar used", "wind used"),
+                    power_boxes,
+                    strict=True,
+                ):
+                    self.assert_plot_has_color(
+                        power_plot,
+                        joint_color,
+                        f"power series: {label}",
+                        box=box,
+                    )
+
+            with Image.open(
+                output_dir / "compute_scheduling_results.png"
+            ) as compute_plot:
+                self.assert_plot_has_color(
+                    compute_plot,
+                    (51, 65, 85),
+                    "CPU arrival",
+                )
+                self.assert_plot_has_color(
+                    compute_plot,
+                    (220, 38, 38),
+                    "CPU scheduled",
+                )
+
+            with Image.open(
+                output_dir / "battery_operation_results.png"
+            ) as battery_plot:
+                for label, color in [
+                    ("battery charge", (37, 99, 235)),
+                    ("battery discharge", (234, 88, 12)),
+                    ("SOC start", (124, 58, 237)),
+                    ("SOC end", (5, 150, 105)),
+                ]:
+                    self.assert_plot_has_color(battery_plot, color, label)
+                battery_pixels = battery_plot.load()
+                power_colors = {(37, 99, 235), (234, 88, 12)}
+                edge_regions = [
+                    (112, 121, 207, 545),
+                    (862, 871, 207, 545),
+                    (992, 1001, 207, 545),
+                    (1742, 1751, 207, 545),
+                ]
+                for left, right, top, bottom in edge_regions:
+                    self.assertFalse(
+                        any(
+                            battery_pixels[x, y] in power_colors
+                            for x in range(left, right)
+                            for y in range(top, bottom)
+                        )
+                    )
+
+            with Image.open(
+                output_dir / "renewable_dispatch_results.png"
+            ) as renewable_plot:
+                for label, color in [
+                    ("renewable available", (100, 116, 139)),
+                    ("renewable used", (5, 150, 105)),
+                    ("renewable curtailed", (220, 38, 38)),
+                ]:
+                    self.assert_plot_has_color(renewable_plot, color, label)
+
+            with Image.open(
+                output_dir / "operating_cost_comparison.png"
+            ) as cost_plot:
+                for label, color in [
+                    ("grid purchase cost", (79, 70, 229)),
+                    ("solar O&M cost", (245, 158, 11)),
+                    ("wind O&M cost", (2, 132, 199)),
+                    ("battery O&M cost", (234, 88, 12)),
+                ]:
+                    self.assert_plot_has_color(cost_plot, color, label)
+
+    def test_make_plots_handles_complete_all_zero_inputs(self) -> None:
+        hourly_results, metrics = _zero_plot_inputs()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory) / "plots"
+
+            make_plots(hourly_results, metrics, output_dir)
+
+            self.assertEqual(
+                sorted(path.name for path in output_dir.glob("*.png")),
+                sorted(PLOT_FILES),
+            )
+            for filename in PLOT_FILES:
+                with Image.open(output_dir / filename) as image:
+                    self.assertEqual(image.size, PLOT_SIZES[filename])
+                    self.assertEqual(image.mode, "RGB")
+                    image.verify()
+
+    def test_make_plots_rejects_empty_inputs_before_writing_png(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory) / "plots"
+
+            with self.assertRaises(ValueError):
+                make_plots(pd.DataFrame(), pd.DataFrame(), output_dir)
+
+            self.assertFalse(
+                any((output_dir / filename).is_file() for filename in PLOT_FILES)
+            )
+
+    def test_make_plots_validates_cases_hours_and_numeric_columns(
+        self,
+    ) -> None:
+        hourly_results, metrics = _zero_plot_inputs()
+        duplicate_hour = hourly_results.copy()
+        duplicate_hour.loc[
+            (duplicate_hour["case"] == "joint")
+            & (duplicate_hour["hour"] == 23),
+            "hour",
+        ] = 22
+        nonfinite = hourly_results.copy()
+        nonfinite.loc[0, "dc_power_mw"] = np.nan
+        malformed_inputs = [
+            (
+                "hourly_results case",
+                hourly_results[hourly_results["case"] != "joint"],
+                metrics,
+            ),
+            ("hour", duplicate_hour, metrics),
+            (
+                "metrics case",
+                hourly_results,
+                pd.concat([metrics, metrics.iloc[[0]]], ignore_index=True),
+            ),
+            (
+                "dc_power_mw",
+                hourly_results.drop(columns="dc_power_mw"),
+                metrics,
+            ),
+            ("dc_power_mw", nonfinite, metrics),
+        ]
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            for index, (
+                message_fragment,
+                invalid_hourly,
+                invalid_metrics,
+            ) in enumerate(malformed_inputs):
+                output_dir = root / str(index)
+                with self.subTest(message_fragment=message_fragment):
+                    with self.assertRaisesRegex(
+                        ValueError, message_fragment
+                    ):
+                        make_plots(
+                            invalid_hourly,
+                            invalid_metrics,
+                            output_dir,
+                        )
+                    self.assertFalse(
+                        any(
+                            (output_dir / filename).is_file()
+                            for filename in PLOT_FILES
+                        )
+                    )
 
 
 if __name__ == "__main__":
