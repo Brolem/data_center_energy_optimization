@@ -10,7 +10,10 @@ import pandas as pd
 
 import scip_first_version.data as energy_data
 from scip_first_version.config import Parameters
-from scip_first_version.model import build_and_solve
+from scip_first_version.model import (
+    _solve_status_is_accepted,
+    build_and_solve,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -504,6 +507,7 @@ class CostOptimizationModelTests(unittest.TestCase):
         electricity_price_cny_per_kwh: np.ndarray | None = None,
         params: Parameters | None = None,
         enable_shift: bool = False,
+        enable_storage: bool = False,
         enable_renewables: bool = True,
         case_name: str,
     ) -> tuple[pd.DataFrame, dict]:
@@ -530,7 +534,7 @@ class CostOptimizationModelTests(unittest.TestCase):
             ),
             params=self.params if params is None else params,
             enable_shift=enable_shift,
-            enable_storage=False,
+            enable_storage=enable_storage,
             enable_renewables=enable_renewables,
             case_name=case_name,
             output_dir=self.output_dir,
@@ -697,13 +701,79 @@ class CostOptimizationModelTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             RuntimeError,
-            r"infeasible_cpu_capacity.*SCIP 状态",
+            r"stage=primary.*case=infeasible_cpu_capacity"
+            r".*status=infeasible.*gap=.*primal_bound=.*dual_bound="
+            r".*未找到可行解",
         ):
             self.solve(
                 params=params,
                 enable_renewables=False,
                 case_name="infeasible_cpu_capacity",
             )
+
+    def test_solve_status_acceptance_rejects_invalid_results(self) -> None:
+        relative_gap = self.params.relative_gap
+        scip_infinity = 1e20
+
+        self.assertTrue(
+            _solve_status_is_accepted(
+                "optimal", 0.0, relative_gap, scip_infinity
+            )
+        )
+        self.assertTrue(
+            _solve_status_is_accepted(
+                "gaplimit",
+                relative_gap + 1e-12,
+                relative_gap,
+                scip_infinity,
+            )
+        )
+        for status, gap in (
+            ("timelimit", 0.0),
+            ("gaplimit", relative_gap + 1e-9),
+            ("gaplimit", float("nan")),
+            ("gaplimit", float("inf")),
+            ("gaplimit", scip_infinity),
+            ("optimal", scip_infinity),
+        ):
+            with self.subTest(status=status, gap=gap):
+                self.assertFalse(
+                    _solve_status_is_accepted(
+                        status, gap, relative_gap, scip_infinity
+                    )
+                )
+
+    def test_storage_rejects_zero_energy_capacity(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            r"battery_energy_mwh 必须大于 0",
+        ):
+            self.solve(
+                params=replace(self.params, battery_energy_mwh=0.0),
+                enable_storage=True,
+                case_name="zero_storage_energy_capacity",
+            )
+
+    def test_disabled_storage_zero_capacity_preserves_finite_soc(self) -> None:
+        params = replace(self.params, battery_energy_mwh=0.0)
+
+        result, metrics = self.solve(
+            params=params,
+            enable_storage=False,
+            case_name="disabled_zero_storage_energy_capacity",
+        )
+
+        self.assertTrue(
+            np.isfinite(result[["soc_start", "soc_end"]]).all().all()
+        )
+        np.testing.assert_allclose(
+            result[["soc_start", "soc_end"]],
+            params.battery_soc_initial,
+            rtol=0.0,
+            atol=0.0,
+        )
+        self.assertTrue(np.isfinite(metrics["soc_cycle_error"]))
+        self.assertEqual(metrics["soc_cycle_error"], 0.0)
 
     def test_shift_respects_three_hour_deadline_and_conserves_cpu(self) -> None:
         cpu_arrival = np.zeros(6)
@@ -727,6 +797,213 @@ class CostOptimizationModelTests(unittest.TestCase):
         self.assertAlmostEqual(result.loc[5, "cpu_scheduled_pu"], 0.0)
         self.assertAlmostEqual(result["cpu_scheduled_pu"].sum(), 0.5)
         self.assertAlmostEqual(metrics["cpu_conservation_error"], 0.0)
+
+    def test_peak_valley_storage_obeys_all_limits_and_recomputes_om(
+        self,
+    ) -> None:
+        prices = np.array([0.1804] * 8 + [0.7174] * 16)
+        zeros = np.zeros(24)
+        result, metrics = self.solve(
+            cpu_arrival=np.full(24, 0.50),
+            solar_available_mw=zeros,
+            wind_available_mw=zeros,
+            electricity_price_cny_per_kwh=prices,
+            enable_storage=True,
+            enable_renewables=False,
+            case_name="peak_valley_storage",
+        )
+
+        self.assertGreater(float(result["charge_mw"].sum()), 1e-8)
+        self.assertGreater(float(result["discharge_mw"].sum()), 1e-8)
+        self.assertLessEqual(
+            float(result["charge_mw"].max()),
+            self.params.battery_charge_power_mw + 1e-8,
+        )
+        self.assertLessEqual(
+            float(result["discharge_mw"].max()),
+            self.params.battery_discharge_power_mw + 1e-8,
+        )
+        self.assertGreaterEqual(float(result["soc_start"].min()), 0.10 - 1e-8)
+        self.assertLessEqual(float(result["soc_end"].max()), 0.90 + 1e-8)
+        self.assertAlmostEqual(float(result.loc[0, "soc_start"]), 0.50)
+        self.assertAlmostEqual(float(result.loc[23, "soc_end"]), 0.50)
+        expected_soc_end = result["soc_start"] + (
+            self.params.charge_efficiency * result["charge_mw"]
+            - result["discharge_mw"] / self.params.discharge_efficiency
+        ) * self.params.time_step_h / self.params.battery_energy_mwh
+        np.testing.assert_allclose(
+            result["soc_end"], expected_soc_end, rtol=0.0, atol=1e-8
+        )
+        np.testing.assert_allclose(
+            result["soc_start"].iloc[1:].to_numpy(),
+            result["soc_end"].iloc[:-1].to_numpy(),
+            rtol=0.0,
+            atol=1e-8,
+        )
+        for activity_column in ("charge_active", "discharge_active"):
+            activity = result[activity_column]
+            self.assertTrue(
+                ((activity >= -1e-9) & (activity <= 1.0 + 1e-9)).all()
+            )
+            np.testing.assert_allclose(
+                activity,
+                np.round(activity),
+                rtol=0.0,
+                atol=1e-9,
+            )
+        self.assertTrue(
+            (
+                result["charge_mw"]
+                <= self.params.battery_charge_power_mw
+                * result["charge_active"]
+                + 1e-9
+            ).all()
+        )
+        self.assertTrue(
+            (
+                result["discharge_mw"]
+                <= self.params.battery_discharge_power_mw
+                * result["discharge_active"]
+                + 1e-9
+            ).all()
+        )
+        self.assertTrue(
+            (
+                result["charge_active"] + result["discharge_active"]
+                <= 1.0 + 1e-8
+            ).all()
+        )
+        self.assertLessEqual(
+            float(
+                (
+                    result["charge_active"]
+                    + result["discharge_active"]
+                ).sum()
+            ),
+            self.params.battery_max_active_periods + 1e-8,
+        )
+        self.assertLessEqual(
+            metrics["battery_active_periods"],
+            self.params.battery_max_active_periods,
+        )
+        expected_hourly_om = (
+            self.params.battery_om_cost_cny_per_kw
+            * (result["charge_mw"] + result["discharge_mw"])
+            * self.params.time_step_h
+            * 1000.0
+        )
+        np.testing.assert_allclose(
+            result["hourly_battery_om_cost_cny"],
+            expected_hourly_om,
+            rtol=0.0,
+            atol=1e-9,
+        )
+        self.assertAlmostEqual(
+            metrics["battery_om_cost_cny"], float(expected_hourly_om.sum())
+        )
+
+    def test_flat_price_storage_can_remain_idle(self) -> None:
+        zeros = np.zeros(24)
+        result, metrics = self.solve(
+            cpu_arrival=np.full(24, 0.50),
+            solar_available_mw=zeros,
+            wind_available_mw=zeros,
+            electricity_price_cny_per_kwh=np.full(24, 0.4489),
+            enable_storage=True,
+            enable_renewables=False,
+            case_name="flat_price_storage",
+        )
+
+        np.testing.assert_allclose(result["charge_mw"], 0.0, atol=1e-8)
+        np.testing.assert_allclose(result["discharge_mw"], 0.0, atol=1e-8)
+        self.assertEqual(metrics["battery_active_periods"], 0)
+
+    def test_lexicographic_solves_cost_then_flexible_task_delay(self) -> None:
+        cpu_arrival = np.zeros(24)
+        cpu_arrival[0] = 0.50
+        zeros = np.zeros(24)
+        prices = np.full(24, 0.448900)
+        prices[1] = 0.448894
+        result, metrics = self.solve(
+            cpu_arrival=cpu_arrival,
+            solar_available_mw=zeros,
+            wind_available_mw=zeros,
+            electricity_price_cny_per_kwh=prices,
+            params=replace(self.params, flex_ratio=1.0),
+            enable_shift=True,
+            enable_renewables=False,
+            case_name="lexicographic_delay",
+        )
+
+        self.assertTrue(
+            (self.output_dir / "lexicographic_delay_primary.lp").is_file()
+        )
+        self.assertTrue(
+            (self.output_dir / "lexicographic_delay_secondary.lp").is_file()
+        )
+        self.assertEqual(metrics["primary_solve_status"], "optimal")
+        self.assertEqual(metrics["secondary_solve_status"], "optimal")
+        self.assertLessEqual(
+            metrics["operating_cost_cny"],
+            metrics["primary_operating_cost_cny"] + 0.010001,
+        )
+        self.assertGreater(
+            metrics["primary_total_task_delay_cpu_hours"],
+            metrics["total_task_delay_cpu_hours"],
+        )
+        self.assertAlmostEqual(
+            metrics["total_task_delay_cpu_hours"], 0.0, places=8
+        )
+        self.assertAlmostEqual(float(result.loc[0, "cpu_scheduled_pu"]), 0.50)
+
+    def test_storage_never_costs_more_than_no_storage_beyond_tolerance(
+        self,
+    ) -> None:
+        no_storage_result, no_storage_metrics = self.solve(
+            case_name="renewables_no_storage"
+        )
+        storage_result, storage_metrics = self.solve(
+            enable_storage=True,
+            case_name="renewables_with_storage",
+        )
+
+        self.assertEqual(len(storage_result), len(no_storage_result))
+        self.assertLessEqual(
+            storage_metrics["operating_cost_cny"],
+            no_storage_metrics["operating_cost_cny"] + 0.010001,
+        )
+
+    def test_storage_power_balance_and_cycle_metrics_match_hourly_results(
+        self,
+    ) -> None:
+        prices = np.array([0.1804] * 8 + [0.7174] * 16)
+        result, metrics = self.solve(
+            electricity_price_cny_per_kwh=prices,
+            enable_storage=True,
+            case_name="storage_power_balance",
+        )
+
+        np.testing.assert_allclose(
+            result["grid_power_mw"]
+            + result["solar_used_mw"]
+            + result["wind_used_mw"]
+            + result["discharge_mw"],
+            result["dc_power_mw"] + result["charge_mw"],
+            rtol=0.0,
+            atol=1e-8,
+        )
+        self.assertAlmostEqual(
+            metrics["soc_cycle_error"],
+            abs(float(result.loc[23, "soc_end"] - result.loc[0, "soc_start"])),
+        )
+        self.assertAlmostEqual(
+            metrics["max_simultaneous_charge_discharge_mw2"],
+            float((result["charge_mw"] * result["discharge_mw"]).max()),
+        )
+        self.assertAlmostEqual(metrics["soc_cycle_error"], 0.0, places=8)
+        self.assertAlmostEqual(
+            metrics["max_simultaneous_charge_discharge_mw2"], 0.0, places=8
+        )
 
 
 if __name__ == "__main__":
