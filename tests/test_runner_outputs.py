@@ -12,9 +12,10 @@ from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
-from PIL import Image
+from PIL import Image, ImageDraw
 
 import run_first_version
+import scip_first_version.reporting as reporting
 from run_first_version import (
     _archive_source_files,
     _generated_output_names,
@@ -77,6 +78,7 @@ def _zero_plot_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:
                     "hour": hour,
                     "cpu_arrival_pu": 0.0,
                     "cpu_scheduled_pu": 0.0,
+                    "it_power_mw": 0.0,
                     "dc_power_mw": 0.0,
                     "grid_power_mw": 0.0,
                     "solar_available_mw": 0.0,
@@ -87,8 +89,14 @@ def _zero_plot_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:
                     "wind_curtailed_mw": 0.0,
                     "charge_mw": 0.0,
                     "discharge_mw": 0.0,
-                    "soc_start": 0.0,
-                    "soc_end": 0.0,
+                    "soc_start": 0.5,
+                    "soc_end": 0.5,
+                    "electricity_price_cny_per_kwh": 0.0,
+                    "hourly_grid_purchase_cost_cny": 0.0,
+                    "hourly_solar_om_cost_cny": 0.0,
+                    "hourly_wind_om_cost_cny": 0.0,
+                    "hourly_battery_om_cost_cny": 0.0,
+                    "hourly_operating_cost_cny": 0.0,
                 }
             )
     metrics = pd.DataFrame(
@@ -98,6 +106,7 @@ def _zero_plot_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:
             "solar_om_cost_cny": 0.0,
             "wind_om_cost_cny": 0.0,
             "battery_om_cost_cny": 0.0,
+            "operating_cost_cny": 0.0,
         }
     )
     return pd.DataFrame(hourly_rows), metrics
@@ -905,7 +914,20 @@ class RunnerOutputTests(unittest.TestCase):
                 parameter_values["wind_capacity_mw"],
                 parameters.wind_capacity_mw,
             )
-            self.assertIsInstance(metadata["software_versions"], dict)
+            software = metadata["software_versions"]
+            self.assertIsInstance(software, dict)
+            self.assertTrue(
+                {
+                    "python",
+                    "pyscipopt",
+                    "scip",
+                    "pillow",
+                    "pandas",
+                    "numpy",
+                }.issubset(software)
+            )
+            self.assertEqual(software["pandas"], pd.__version__)
+            self.assertEqual(software["numpy"], np.__version__)
 
             required_files = [
                 "model_input_typical_day.csv",
@@ -1114,6 +1136,136 @@ class RunnerOutputTests(unittest.TestCase):
                             for filename in PLOT_FILES
                         )
                     )
+
+    def test_make_plots_rejects_invalid_physical_semantics_before_writing(
+        self,
+    ) -> None:
+        hourly_results, metrics = _zero_plot_inputs()
+
+        negative_power = hourly_results.copy()
+        negative_power.loc[0, "dc_power_mw"] = -1e-6
+
+        negative_hourly_cost = hourly_results.copy()
+        negative_hourly_cost.loc[
+            0, "hourly_operating_cost_cny"
+        ] = -1e-6
+
+        negative_metric_cost = metrics.copy()
+        negative_metric_cost.loc[0, "operating_cost_cny"] = -1e-6
+
+        invalid_soc = hourly_results.copy()
+        invalid_soc.loc[0, "soc_end"] = 0.900001
+
+        fractional_hour = hourly_results.copy()
+        fractional_hour["hour"] = fractional_hour["hour"].astype(float)
+        fractional_hour.loc[0, "hour"] = 0.5
+
+        inconsistent_cpu_arrival = hourly_results.copy()
+        inconsistent_cpu_arrival.loc[
+            (inconsistent_cpu_arrival["case"] == "joint")
+            & (inconsistent_cpu_arrival["hour"] == 0),
+            "cpu_arrival_pu",
+        ] = 0.01
+
+        invalid_inputs = [
+            ("dc_power_mw", negative_power, metrics),
+            (
+                "hourly_operating_cost_cny",
+                negative_hourly_cost,
+                metrics,
+            ),
+            (
+                "operating_cost_cny",
+                hourly_results,
+                negative_metric_cost,
+            ),
+            ("soc_end", invalid_soc, metrics),
+            ("integer", fractional_hour, metrics),
+            (
+                "joint.*cpu_arrival_pu",
+                inconsistent_cpu_arrival,
+                metrics,
+            ),
+        ]
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            for index, (
+                message_pattern,
+                invalid_hourly,
+                invalid_metrics,
+            ) in enumerate(invalid_inputs):
+                output_dir = root / str(index)
+                with self.subTest(message_pattern=message_pattern):
+                    with self.assertRaisesRegex(
+                        ValueError, message_pattern
+                    ):
+                        make_plots(
+                            invalid_hourly,
+                            invalid_metrics,
+                            output_dir,
+                        )
+                    self.assertFalse(
+                        any(
+                            (output_dir / filename).is_file()
+                            for filename in PLOT_FILES
+                        )
+                    )
+
+    def test_boundary_negative_costs_render_as_zero_without_negative_zero(
+        self,
+    ) -> None:
+        hourly_results, metrics = _zero_plot_inputs()
+        component_columns = [
+            "grid_purchase_cost_cny",
+            "solar_om_cost_cny",
+            "wind_om_cost_cny",
+            "battery_om_cost_cny",
+        ]
+        metrics.loc[:, component_columns] = -1e-10
+        metrics.loc[:, "operating_cost_cny"] = 0.0
+        drawn_text: list[str] = []
+        original_text = ImageDraw.ImageDraw.text
+
+        def record_text(
+            image_draw: ImageDraw.ImageDraw,
+            xy: tuple[float, float] | tuple[int, int],
+            text: str,
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            drawn_text.append(str(text))
+            original_text(image_draw, xy, text, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory) / "plots"
+            with patch.object(
+                ImageDraw.ImageDraw,
+                "text",
+                new=record_text,
+            ):
+                make_plots(hourly_results, metrics, output_dir)
+
+            self.assertEqual(drawn_text.count("CNY 0"), len(CASE_ORDER))
+            self.assertNotIn("CNY -0", drawn_text)
+            for filename in PLOT_FILES:
+                with Image.open(output_dir / filename) as image:
+                    image.verify()
+
+    def test_normalized_nonnegative_cost_obeys_exact_tolerance(self) -> None:
+        for value in (-1e-10, -5e-11, -1e-20, -0.0):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    reporting._normalized_nonnegative_cost(value),
+                    0.0,
+                )
+
+        self.assertEqual(
+            reporting._normalized_nonnegative_cost(12.5),
+            12.5,
+        )
+        with self.assertRaises(ValueError):
+            reporting._normalized_nonnegative_cost(-1.000001e-10)
 
 
 if __name__ == "__main__":

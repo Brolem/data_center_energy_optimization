@@ -53,6 +53,7 @@ HOURLY_NUMERIC_COLUMNS = [
     "hour",
     "cpu_arrival_pu",
     "cpu_scheduled_pu",
+    "it_power_mw",
     "dc_power_mw",
     "grid_power_mw",
     "solar_available_mw",
@@ -65,13 +66,42 @@ HOURLY_NUMERIC_COLUMNS = [
     "discharge_mw",
     "soc_start",
     "soc_end",
+    "electricity_price_cny_per_kwh",
+    "hourly_grid_purchase_cost_cny",
+    "hourly_solar_om_cost_cny",
+    "hourly_wind_om_cost_cny",
+    "hourly_battery_om_cost_cny",
+    "hourly_operating_cost_cny",
 ]
 METRIC_NUMERIC_COLUMNS = [
     "grid_purchase_cost_cny",
     "solar_om_cost_cny",
     "wind_om_cost_cny",
     "battery_om_cost_cny",
+    "operating_cost_cny",
 ]
+NONNEGATIVE_HOURLY_COLUMNS = [
+    "cpu_arrival_pu",
+    "cpu_scheduled_pu",
+    "it_power_mw",
+    "dc_power_mw",
+    "grid_power_mw",
+    "solar_available_mw",
+    "solar_used_mw",
+    "solar_curtailed_mw",
+    "wind_available_mw",
+    "wind_used_mw",
+    "wind_curtailed_mw",
+    "charge_mw",
+    "discharge_mw",
+    "electricity_price_cny_per_kwh",
+    "hourly_grid_purchase_cost_cny",
+    "hourly_solar_om_cost_cny",
+    "hourly_wind_om_cost_cny",
+    "hourly_battery_om_cost_cny",
+    "hourly_operating_cost_cny",
+]
+NONNEGATIVE_TOLERANCE = 1e-10
 
 
 def software_versions() -> dict[str, str]:
@@ -90,7 +120,19 @@ def software_versions() -> dict[str, str]:
             )
         ),
         "pillow": __import__("PIL").__version__,
+        "pandas": pd.__version__,
+        "numpy": np.__version__,
     }
+
+
+def _normalized_nonnegative_cost(value: float) -> float:
+    if value < -NONNEGATIVE_TOLERANCE:
+        raise ValueError(
+            f"cost value {value} is below -{NONNEGATIVE_TOLERANCE}"
+        )
+    if value < 0.0:
+        return 0.0
+    return value
 
 
 def _validate_plot_inputs(
@@ -135,6 +177,38 @@ def _validate_plot_inputs(
                     "contains non-finite values"
                 )
 
+    hour_values = hourly_results["hour"].to_numpy(dtype=float)
+    if not np.equal(hour_values, np.round(hour_values)).all():
+        raise ValueError("hourly_results hour values must be integers")
+
+    for column in NONNEGATIVE_HOURLY_COLUMNS:
+        if (
+            hourly_results[column].to_numpy(dtype=float)
+            < -NONNEGATIVE_TOLERANCE
+        ).any():
+            raise ValueError(
+                f"hourly_results physical column {column} "
+                f"contains values below -{NONNEGATIVE_TOLERANCE}"
+            )
+
+    for column in ("soc_start", "soc_end"):
+        values = hourly_results[column].to_numpy(dtype=float)
+        if ((values < 0.10 - 1e-9) | (values > 0.90 + 1e-9)).any():
+            raise ValueError(
+                f"hourly_results {column} must be within "
+                "[0.10 - 1e-9, 0.90 + 1e-9]"
+            )
+
+    for column in METRIC_NUMERIC_COLUMNS:
+        if (
+            metrics[column].to_numpy(dtype=float)
+            < -NONNEGATIVE_TOLERANCE
+        ).any():
+            raise ValueError(
+                f"metrics cost column {column} contains values below "
+                f"-{NONNEGATIVE_TOLERANCE}"
+            )
+
     for dataframe_name, dataframe in dataframes.items():
         missing_cases = [
             case_name
@@ -155,6 +229,13 @@ def _validate_plot_inputs(
             )
 
     expected_hours = set(range(24))
+    grid_only_cpu_arrival = (
+        hourly_results.loc[
+            hourly_results["case"] == "grid_only"
+        ]
+        .sort_values("hour")["cpu_arrival_pu"]
+        .to_numpy(dtype=float)
+    )
     for case_name in CASE_ORDER:
         case_rows = hourly_results.loc[
             hourly_results["case"] == case_name
@@ -169,6 +250,22 @@ def _validate_plot_inputs(
             raise ValueError(
                 f"hourly_results case {case_name} hour values must be "
                 "unique 0..23"
+            )
+
+        case_cpu_arrival = (
+            case_rows.sort_values("hour")["cpu_arrival_pu"].to_numpy(
+                dtype=float
+            )
+        )
+        if not np.allclose(
+            case_cpu_arrival,
+            grid_only_cpu_arrival,
+            rtol=0.0,
+            atol=1e-10,
+        ):
+            raise ValueError(
+                f"hourly_results case {case_name} cpu_arrival_pu "
+                "does not match grid_only by hour"
             )
 
         metric_row_count = int(metrics["case"].eq(case_name).sum())
@@ -825,7 +922,14 @@ def _draw_cost_comparison(
     ]
     component_colors = ["#4F46E5", "#F59E0B", "#0284C7", "#EA580C"]
     components = [
-        ordered[column].to_numpy(dtype=float) for column in component_columns
+        np.array(
+            [
+                _normalized_nonnegative_cost(value)
+                for value in ordered[column].to_numpy(dtype=float)
+            ],
+            dtype=float,
+        )
+        for column in component_columns
     ]
     totals = np.sum(np.vstack(components), axis=0)
     y_max = max(float(np.max(totals)) * 1.15, 1.0)
@@ -868,7 +972,7 @@ def _draw_cost_comparison(
     for case_index, center in enumerate(centers):
         cumulative = 0.0
         for values, color in zip(components, component_colors, strict=True):
-            value = max(float(values[case_index]), 0.0)
+            value = float(values[case_index])
             lower_y = round(
                 plot_bottom
                 - cumulative / y_max * (plot_bottom - plot_top)
