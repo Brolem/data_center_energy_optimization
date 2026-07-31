@@ -25,7 +25,7 @@ from run_first_version import (
     parse_args,
 )
 from scip_first_version.config import Parameters
-from scip_first_version.reporting import make_plots
+from scip_first_version.reporting import LEGACY_PLOT_FILENAMES, make_plots
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -243,8 +243,8 @@ class RunnerOutputTests(unittest.TestCase):
 
             self.assertEqual(list(output_dir.iterdir()), [])
 
-    def test_generated_output_names_reject_legal_source_archives(self) -> None:
-        expected_names = {
+    def test_reserved_output_names_reject_legal_source_archives(self) -> None:
+        expected_generated_names = {
             "all_days_hourly.csv",
             "model_input_typical_day.csv",
             "hourly_case_results.csv",
@@ -257,7 +257,18 @@ class RunnerOutputTests(unittest.TestCase):
             ),
             *PLOT_FILES,
         }
-        self.assertEqual(_generated_output_names(), expected_names)
+        expected_reserved_names = expected_generated_names | set(
+            LEGACY_PLOT_FILENAMES
+        )
+        self.assertEqual(len(expected_reserved_names), 23)
+        self.assertEqual(
+            _generated_output_names(),
+            expected_generated_names,
+        )
+        self.assertEqual(
+            run_first_version._reserved_output_names(),
+            expected_reserved_names,
+        )
 
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -265,7 +276,7 @@ class RunnerOutputTests(unittest.TestCase):
             output_dir = root / "outputs"
             source_dir.mkdir()
             valid_google_input = INPUT_PATH.read_bytes()
-            for reserved_name in sorted(expected_names):
+            for reserved_name in sorted(expected_reserved_names):
                 source_path = source_dir / reserved_name
                 source_path.write_bytes(valid_google_input)
                 with self.subTest(reserved_name=reserved_name):
@@ -277,6 +288,65 @@ class RunnerOutputTests(unittest.TestCase):
                     message = str(context.exception)
                     self.assertIn(str(source_path.resolve()), message)
                     self.assertIn(reserved_name, message)
+
+    def test_legacy_named_input_in_output_dir_is_rejected_unchanged(
+        self,
+    ) -> None:
+        valid_google_input = INPUT_PATH.read_bytes()
+        for legacy_name in LEGACY_PLOT_FILENAMES:
+            with self.subTest(legacy_name=legacy_name):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    output_dir = root / "outputs"
+                    output_dir.mkdir()
+                    input_path = output_dir / legacy_name
+                    input_path.write_bytes(valid_google_input)
+                    (output_dir / "case_metrics.csv").write_bytes(
+                        b"old metrics\n"
+                    )
+                    (output_dir / "unknown-sentinel.bin").write_bytes(
+                        b"unknown sentinel\x00\xff"
+                    )
+                    before = _flat_file_hashes(output_dir)
+                    arguments = [
+                        "run_first_version.py",
+                        "--input",
+                        str(input_path),
+                        "--weather-source",
+                        str(WEATHER_SOURCE_PATH),
+                        "--energy-scenario",
+                        str(SCENARIO_PATH),
+                        "--output-dir",
+                        str(output_dir),
+                    ]
+
+                    with (
+                        patch("sys.argv", arguments),
+                        patch(
+                            "run_first_version.build_and_solve"
+                        ) as solve,
+                        self.assertRaises(ValueError) as context,
+                    ):
+                        main()
+
+                    solve.assert_not_called()
+                    message = str(context.exception)
+                    self.assertIn(str(input_path.resolve()), message)
+                    self.assertIn(legacy_name, message)
+                    self.assertEqual(_flat_file_hashes(output_dir), before)
+                    self.assertTrue(input_path.is_file())
+                    self.assertEqual(
+                        hashlib.sha256(input_path.read_bytes()).digest(),
+                        hashlib.sha256(valid_google_input).digest(),
+                    )
+                    self.assertEqual(
+                        list(root.glob(".day-ahead-staging-*")),
+                        [],
+                    )
+                    self.assertEqual(
+                        list(root.glob(".day-ahead-backup-*")),
+                        [],
+                    )
 
     def test_reserved_name_input_in_output_dir_is_rejected_unchanged(
         self,
@@ -469,6 +539,10 @@ class RunnerOutputTests(unittest.TestCase):
                 "unknown-sentinel.bin": b"unknown sentinel\x00\xff",
             }.items():
                 (output_dir / filename).write_bytes(content)
+            for index, filename in enumerate(LEGACY_PLOT_FILENAMES):
+                (output_dir / filename).write_bytes(
+                    f"legacy solve {index}\n".encode("ascii")
+                )
             before = _flat_file_hashes(output_dir)
             arguments = [
                 "run_first_version.py",
@@ -529,6 +603,107 @@ class RunnerOutputTests(unittest.TestCase):
                 self.assertRaisesRegex(OSError, "injected publish failure"),
             ):
                 _publish_staged_outputs(staging_dir, output_dir)
+
+            self.assertEqual(_flat_file_hashes(output_dir), before)
+            self.assertEqual(list(root.glob(".day-ahead-backup-*")), [])
+
+    def test_publish_removes_legacy_files_and_staged_overlap_wins(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            staging_dir = root / "staging"
+            output_dir = root / "outputs"
+            staging_dir.mkdir()
+            output_dir.mkdir()
+            overlap_name = LEGACY_PLOT_FILENAMES[0]
+            (staging_dir / overlap_name).write_bytes(b"new plot\n")
+            for index, filename in enumerate(LEGACY_PLOT_FILENAMES):
+                (output_dir / filename).write_bytes(
+                    f"old plot {index}\n".encode("ascii")
+                )
+            unknown_path = output_dir / "unknown.bin"
+            unknown_path.write_bytes(b"unknown\x00\xff")
+
+            _publish_staged_outputs(
+                staging_dir,
+                output_dir,
+                remove_names=set(LEGACY_PLOT_FILENAMES),
+            )
+
+            self.assertEqual(
+                (output_dir / overlap_name).read_bytes(),
+                b"new plot\n",
+            )
+            for filename in LEGACY_PLOT_FILENAMES[1:]:
+                self.assertFalse((output_dir / filename).exists())
+            self.assertEqual(unknown_path.read_bytes(), b"unknown\x00\xff")
+            self.assertEqual(list(root.glob(".day-ahead-backup-*")), [])
+
+    def test_publish_rejects_non_flat_remove_names(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            staging_dir = root / "staging"
+            output_dir = root / "outputs"
+            staging_dir.mkdir()
+            output_dir.mkdir()
+            unknown_path = output_dir / "unknown.bin"
+            unknown_path.write_bytes(b"unknown\x00\xff")
+
+            for remove_name in ("", ".", "..", "nested/plot.png"):
+                with self.subTest(remove_name=remove_name):
+                    with self.assertRaises(ValueError):
+                        _publish_staged_outputs(
+                            staging_dir,
+                            output_dir,
+                            remove_names={remove_name},
+                        )
+
+            self.assertEqual(unknown_path.read_bytes(), b"unknown\x00\xff")
+            self.assertEqual(list(root.glob(".day-ahead-backup-*")), [])
+
+    def test_publish_failure_restores_removed_legacy_files(self) -> None:
+        real_replace = os.replace
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            staging_dir = root / "staging"
+            output_dir = root / "outputs"
+            staging_dir.mkdir()
+            output_dir.mkdir()
+            (staging_dir / "a.csv").write_bytes(b"new a\n")
+            (staging_dir / "b.csv").write_bytes(b"new b\n")
+            (output_dir / "a.csv").write_bytes(b"old a\n")
+            for index, filename in enumerate(LEGACY_PLOT_FILENAMES):
+                (output_dir / filename).write_bytes(
+                    f"legacy plot {index}\n".encode("ascii")
+                )
+            (output_dir / "unknown.bin").write_bytes(b"unknown\x00\xff")
+            before = _flat_file_hashes(output_dir)
+
+            def fail_during_publish(source, target):
+                source_path = Path(source)
+                if (
+                    source_path.parent == staging_dir
+                    and source_path.name == "b.csv"
+                ):
+                    raise OSError("injected legacy publish failure")
+                return real_replace(source, target)
+
+            with (
+                patch(
+                    "run_first_version.os.replace",
+                    side_effect=fail_during_publish,
+                ),
+                self.assertRaisesRegex(
+                    OSError,
+                    "injected legacy publish failure",
+                ),
+            ):
+                _publish_staged_outputs(
+                    staging_dir,
+                    output_dir,
+                    remove_names=set(LEGACY_PLOT_FILENAMES),
+                )
 
             self.assertEqual(_flat_file_hashes(output_dir), before)
             self.assertEqual(list(root.glob(".day-ahead-backup-*")), [])
@@ -715,6 +890,10 @@ class RunnerOutputTests(unittest.TestCase):
             (output_dir / "unknown-sentinel.bin").write_bytes(
                 b"unknown sentinel\x00\xff"
             )
+            for index, filename in enumerate(LEGACY_PLOT_FILENAMES):
+                (output_dir / filename).write_bytes(
+                    f"legacy plot {index}\n".encode("ascii")
+                )
             before = _flat_file_hashes(output_dir)
             arguments = [
                 "run_first_version.py",
@@ -749,6 +928,10 @@ class RunnerOutputTests(unittest.TestCase):
             unknown_path = output_dir / "unknown-sentinel.bin"
             unknown_content = b"unknown sentinel\x00\xff"
             unknown_path.write_bytes(unknown_content)
+            for index, filename in enumerate(LEGACY_PLOT_FILENAMES):
+                (output_dir / filename).write_bytes(
+                    f"legacy plot {index}\n".encode("ascii")
+                )
             arguments = [
                 "run_first_version.py",
                 "--output-dir",
@@ -762,6 +945,8 @@ class RunnerOutputTests(unittest.TestCase):
 
             self.assertTrue(stdout.getvalue().isascii())
             self.assertEqual(unknown_path.read_bytes(), unknown_content)
+            for filename in LEGACY_PLOT_FILENAMES:
+                self.assertFalse((output_dir / filename).exists())
             model_input = pd.read_csv(
                 output_dir / "model_input_typical_day.csv"
             )

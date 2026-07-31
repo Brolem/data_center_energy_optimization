@@ -14,7 +14,11 @@ import pandas as pd
 from scip_first_version.config import Parameters
 from scip_first_version.data import load_and_prepare, load_energy_scenario
 from scip_first_version.model import build_and_solve
-from scip_first_version.reporting import make_plots, software_versions
+from scip_first_version.reporting import (
+    LEGACY_PLOT_FILENAMES,
+    make_plots,
+    software_versions,
+)
 
 __all__ = [
     "Parameters",
@@ -103,13 +107,17 @@ def _generated_output_names() -> set[str]:
     }
 
 
+def _reserved_output_names() -> set[str]:
+    return _generated_output_names() | set(LEGACY_PLOT_FILENAMES)
+
+
 def _validate_archive_targets(
     source_paths: list[Path],
     output_dir: Path,
 ) -> None:
     reserved_target_names = {
         _normalized_path_key(output_dir / name): name
-        for name in _generated_output_names()
+        for name in _reserved_output_names()
     }
     source_by_target_key: dict[str, Path] = {}
     for source_path in source_paths:
@@ -165,11 +173,33 @@ def _unlink_for_rollback(path: Path) -> None:
 def _publish_staged_outputs(
     staging_dir: Path,
     output_dir: Path,
+    remove_names: set[str] | None = None,
 ) -> None:
     staged_files = sorted(
         (path for path in staging_dir.iterdir() if path.is_file()),
         key=lambda path: path.name,
     )
+    staged_target_keys = {
+        _normalized_path_key(output_dir / staged_path.name)
+        for staged_path in staged_files
+    }
+    removal_targets_by_key: dict[str, Path] = {}
+    for remove_name in sorted(remove_names or set()):
+        remove_path = Path(remove_name)
+        if (
+            not remove_name
+            or remove_name in {".", ".."}
+            or remove_path.is_absolute()
+            or remove_path.name != remove_name
+        ):
+            raise ValueError(
+                f"remove_names 只允许扁平文件名: {remove_name!r}"
+            )
+        target_path = output_dir / remove_name
+        target_key = _normalized_path_key(target_path)
+        if target_key not in staged_target_keys:
+            removal_targets_by_key.setdefault(target_key, target_path)
+
     output_dir_existed = output_dir.exists()
     output_dir.mkdir(parents=True, exist_ok=True)
     backup_dir = Path(
@@ -185,6 +215,12 @@ def _publish_staged_outputs(
             target_path = output_dir / staged_path.name
             if target_path.exists():
                 backup_path = backup_dir / staged_path.name
+                os.replace(target_path, backup_path)
+                backed_up_targets.append((target_path, backup_path))
+
+        for target_path in removal_targets_by_key.values():
+            if target_path.exists():
+                backup_path = backup_dir / target_path.name
                 os.replace(target_path, backup_path)
                 backed_up_targets.append((target_path, backup_path))
 
@@ -421,7 +457,11 @@ def main() -> None:
             != _normalized_path_key(final_output_dir / source_path.name)
         ]
         _archive_source_files(archived_source_paths, output_dir)
-        _publish_staged_outputs(output_dir, final_output_dir)
+        _publish_staged_outputs(
+            output_dir,
+            final_output_dir,
+            remove_names=set(LEGACY_PLOT_FILENAMES),
+        )
 
     print(json.dumps(metadata, ensure_ascii=True, indent=2))
     print("\nOperating cost metrics:")
