@@ -30,17 +30,23 @@ def run_houston_2020_experiment(
     params: Parameters | None = None,
     show_solver_log: bool = False,
 ) -> ExperimentResult:
-    workload_path = Path(workload_data).resolve(strict=False)
-    energy_path = Path(energy_data).resolve(strict=False)
-    output_path = Path(output_dir).resolve(strict=False)
+    workload_path = Path(workload_data)
+    energy_path = Path(energy_data)
+    output_path = Path(output_dir)
+    resolved_workload_data = workload_path.resolve(strict=False)
+    resolved_energy_data = energy_path.resolve(strict=False)
+    resolved_output_dir = output_path.resolve(strict=False)
     for input_identifier, input_path in (
-        ("workload_data", workload_path),
-        ("energy_data", energy_path),
+        ("workload_data", resolved_workload_data),
+        ("energy_data", resolved_energy_data),
     ):
-        if input_path == output_path or input_path.is_relative_to(output_path):
+        if input_path == resolved_output_dir or input_path.is_relative_to(
+            resolved_output_dir
+        ):
             raise ValueError(
                 f"{input_identifier} 输入路径 {input_path} 与 "
-                f"output_dir {output_path} 冲突：输入不得等于输出目录，"
+                f"output_dir {resolved_output_dir} 冲突："
+                "输入不得等于输出目录，"
                 "也不得位于其目录树内。"
             )
     experiment_params = Parameters() if params is None else params

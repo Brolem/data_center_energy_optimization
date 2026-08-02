@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import pandas as pd
 
 from dc_energy_opt.experiments.houston_2020 import (
@@ -176,6 +178,106 @@ class Houston2020ExperimentTests(unittest.TestCase):
 
             self.assertTrue(output_dir.is_file())
             self.assertEqual(output_dir.read_bytes(), original_bytes)
+
+    def test_relative_input_paths_remain_relative_in_metadata(self) -> None:
+        hourly = pd.DataFrame(
+            {
+                "day": np.repeat(np.arange(1, 29), 24),
+                "hour": np.tile(np.arange(24), 28),
+                "avg_cpu": np.full(672, 0.5),
+            }
+        )
+        energy_scenario = pd.DataFrame(
+            {
+                "timestamp_lst": pd.date_range(
+                    "2020-04-30 00:00:00",
+                    periods=699,
+                    freq="h",
+                ),
+                "solar_available_mw": np.zeros(699),
+                "wind_available_mw": np.zeros(699),
+                "tou_period": ["flat"] * 699,
+                "electricity_price_cny_per_kwh": np.full(699, 0.4489),
+            }
+        )
+
+        def fake_solve(
+            **kwargs: object,
+        ) -> tuple[pd.DataFrame, dict, pd.DataFrame]:
+            case_name = str(kwargs["case_name"])
+            return (
+                pd.DataFrame({"case": [case_name]}),
+                {"case": case_name, "operating_cost_cny": 1.0},
+                pd.DataFrame({"case": [case_name]}),
+            )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_path = Path(temporary_directory)
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(temporary_path)
+                workload_data = Path("workload.csv")
+                energy_data = Path("energy.csv")
+                output_dir = Path("outputs/run")
+                workload_data.write_bytes(b"workload")
+                energy_data.write_bytes(b"energy")
+                with (
+                    patch(
+                        "dc_energy_opt.experiments.houston_2020."
+                        "load_and_prepare",
+                        return_value=(pd.DataFrame({"raw": [1]}), hourly, 8, 28),
+                    ) as load_workload,
+                    patch(
+                        "dc_energy_opt.experiments.houston_2020."
+                        "load_houston_energy_scenario",
+                        return_value=energy_scenario,
+                    ) as load_energy,
+                    patch(
+                        "dc_energy_opt.experiments.houston_2020."
+                        "run_rolling_day_ahead",
+                        side_effect=fake_solve,
+                    ),
+                    patch(
+                        "dc_energy_opt.experiments.houston_2020.make_plots"
+                    ),
+                    patch(
+                        "dc_energy_opt.experiments.houston_2020."
+                        "software_versions",
+                        return_value={},
+                    ),
+                ):
+                    experiment = run_houston_2020_experiment(
+                        workload_data=workload_data,
+                        energy_data=energy_data,
+                        output_dir=output_dir,
+                    )
+
+                load_workload.assert_called_once_with(workload_data)
+                self.assertEqual(load_energy.call_args.args[0], energy_data)
+                metadata = experiment.metadata
+                self.assertEqual(metadata["input_file"], "workload.csv")
+                self.assertEqual(
+                    metadata["energy_scenario_file"],
+                    "energy.csv",
+                )
+                self.assertEqual(
+                    metadata["renewable_data_source"]["file"],
+                    "energy.csv",
+                )
+                self.assertEqual(
+                    metadata["electricity_price_source"]["file"],
+                    "energy.csv",
+                )
+                absolute_prefix = str(temporary_path.resolve(strict=False))
+                for metadata_path in (
+                    metadata["input_file"],
+                    metadata["energy_scenario_file"],
+                    metadata["renewable_data_source"]["file"],
+                    metadata["electricity_price_source"]["file"],
+                ):
+                    self.assertNotIn(absolute_prefix, metadata_path)
+            finally:
+                os.chdir(previous_cwd)
 
     def test_full_experiment_publishes_exact_tree_and_results(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
