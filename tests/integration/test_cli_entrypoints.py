@@ -154,6 +154,56 @@ class CliEntrypointTests(unittest.TestCase):
             stdout.getvalue(),
         )
 
+    def test_legacy_dash_prefixed_paths_reach_the_formal_experiment(self) -> None:
+        with (
+            patch(
+                "run_day_ahead_experiment.run_houston_2020_experiment",
+                return_value=self._experiment(),
+            ) as run_experiment,
+            patch("sys.stdout", new_callable=io.StringIO),
+            patch("sys.stderr", new_callable=io.StringIO),
+        ):
+            run_first_version.main(
+                [
+                    "--input=-workload.csv",
+                    "--energy-scenario=-energy.csv",
+                    "--output-dir=-output",
+                ]
+            )
+
+        run_experiment.assert_called_once_with(
+            workload_data=Path("-workload.csv"),
+            energy_data=Path("-energy.csv"),
+            output_dir=Path("-output"),
+            show_solver_log=False,
+        )
+
+    def test_legacy_defaults_map_exactly_to_formal_defaults(self) -> None:
+        legacy_defaults = run_first_version.parse_args([])
+        formal_defaults = run_day_ahead_experiment.parse_args([])
+
+        self.assertEqual(legacy_defaults.input, formal_defaults.workload_data)
+        self.assertEqual(
+            legacy_defaults.energy_scenario,
+            formal_defaults.energy_data,
+        )
+        self.assertEqual(legacy_defaults.output_dir, formal_defaults.output_dir)
+        self.assertFalse(legacy_defaults.show_scip_log)
+        self.assertFalse(formal_defaults.show_solver_log)
+
+        with patch(
+            "run_day_ahead_experiment.run_houston_2020_experiment",
+            return_value=self._experiment(),
+        ) as run_experiment:
+            with patch("sys.stdout", new_callable=io.StringIO):
+                run_day_ahead_experiment.main([])
+            formal_call = run_experiment.call_args
+            run_experiment.reset_mock()
+            with patch("sys.stdout", new_callable=io.StringIO):
+                run_first_version.main([])
+
+        self.assertEqual(run_experiment.call_args, formal_call)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -32,12 +32,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     formal_arguments = [
-        "--workload-data",
-        str(args.input),
-        "--energy-data",
-        str(args.energy_scenario),
-        "--output-dir",
-        str(args.output_dir),
+        f"--workload-data={args.input}",
+        f"--energy-data={args.energy_scenario}",
+        f"--output-dir={args.output_dir}",
     ]
     if args.show_scip_log:
         formal_arguments.append("--show-solver-log")

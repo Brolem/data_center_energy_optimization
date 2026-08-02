@@ -16,7 +16,7 @@
 ```powershell
 conda run -n scip_env python -m unittest discover -s tests -t . -v
 conda run -n scip_env python -m unittest discover -s archive/legacy_phoenix/tests -t . -v
-conda run -n scip_env python -m compileall -q dc_energy_opt scripts run_day_ahead_experiment.py
+conda run -n scip_env python -m compileall -q dc_energy_opt scripts run_day_ahead_experiment.py run_first_version.py
 conda run -n scip_env python -m pip check
 git diff --check HEAD
 ```
