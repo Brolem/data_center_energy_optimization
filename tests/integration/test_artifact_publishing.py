@@ -428,6 +428,138 @@ class ArtifactPublishingTests(unittest.TestCase):
                 "keep",
             )
 
+    def assert_linked_final_output_is_rejected(
+        self,
+        final_output_dir: Path,
+        protected_path: Path,
+    ) -> None:
+        before = _tree_hashes(protected_path)
+        try:
+            with staged_run_directory(final_output_dir) as paths:
+                (paths.results / "new.bin").write_bytes(b"new\x00\xff")
+        except ValueError as error:
+            self.assertEqual(
+                str(error),
+                "正式输出目录不得为符号链接或 Windows junction。",
+            )
+        else:
+            self.assertEqual(
+                _tree_hashes(protected_path),
+                before,
+                "linked_final_output_destroyed_protected_target",
+            )
+            self.fail("linked final output was not rejected")
+
+        self.assertEqual(_tree_hashes(protected_path), before)
+        self.assertTrue(os.path.lexists(final_output_dir))
+        self.assert_no_transaction_paths(
+            final_output_dir.parent,
+            final_output_dir.name,
+        )
+
+    def test_final_symlink_is_rejected_without_touching_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            parent = Path(temporary_directory)
+            protected_path = parent / "protected"
+            protected_path.mkdir()
+            (protected_path / "marker.bin").write_bytes(
+                b"protected final symlink\x00\xff"
+            )
+            final_output_dir = parent / "run"
+            try:
+                final_output_dir.symlink_to(
+                    protected_path,
+                    target_is_directory=True,
+                )
+            except OSError as error:
+                self.skipTest(f"symlink unavailable: {error}")
+
+            self.assert_linked_final_output_is_rejected(
+                final_output_dir,
+                protected_path,
+            )
+
+    def test_broken_final_symlink_is_rejected_without_creating_target(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            parent = Path(temporary_directory)
+            protected_path = parent / "protected"
+            protected_path.mkdir()
+            (protected_path / "marker.bin").write_bytes(
+                b"protected broken final symlink\x00\xff"
+            )
+            missing_target = protected_path / "missing-output"
+            final_output_dir = parent / "run"
+            try:
+                final_output_dir.symlink_to(
+                    missing_target,
+                    target_is_directory=True,
+                )
+            except OSError as error:
+                self.skipTest(f"symlink unavailable: {error}")
+
+            try:
+                with staged_run_directory(final_output_dir) as paths:
+                    (paths.results / "new.bin").write_bytes(b"new\x00\xff")
+            except ValueError as error:
+                self.assertEqual(
+                    str(error),
+                    "正式输出目录不得为符号链接或 Windows junction。",
+                )
+            else:
+                self.assertFalse(
+                    missing_target.exists(),
+                    "broken_final_output_materialized_target",
+                )
+                self.fail("broken final symlink was not rejected")
+
+            self.assertFalse(missing_target.exists())
+            self.assertEqual(
+                (protected_path / "marker.bin").read_bytes(),
+                b"protected broken final symlink\x00\xff",
+            )
+            self.assertTrue(os.path.lexists(final_output_dir))
+            self.assert_no_transaction_paths(parent, "run")
+
+    @unittest.skipUnless(
+        os.name == "nt" and hasattr(Path, "is_junction"),
+        "requires Windows junction support",
+    )
+    def test_final_junction_is_rejected_without_touching_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            parent = Path(temporary_directory)
+            protected_path = parent / "protected"
+            protected_path.mkdir()
+            (protected_path / "marker.bin").write_bytes(
+                b"protected final junction\x00\xff"
+            )
+            final_output_dir = parent / "run"
+            creation = subprocess.run(
+                [
+                    "cmd",
+                    "/c",
+                    "mklink",
+                    "/J",
+                    str(final_output_dir),
+                    str(protected_path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if creation.returncode != 0:
+                self.skipTest(
+                    "junction unavailable: "
+                    f"{creation.stdout}{creation.stderr}"
+                )
+            self.assertTrue(final_output_dir.is_junction())
+
+            self.assert_linked_final_output_is_rejected(
+                final_output_dir,
+                protected_path,
+            )
+
     def test_generated_symlink_cleanup_preserves_target_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             parent = Path(temporary_directory)

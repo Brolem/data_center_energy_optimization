@@ -95,12 +95,28 @@ def _remove_generated_path(
 @contextmanager
 def staged_run_directory(final_output_dir: Path) -> Iterator[RunPaths]:
     """Build a complete run tree beside final_output_dir and publish atomically."""
-    final_path = Path(final_output_dir).resolve(strict=False)
-    parent = final_path.parent
-    if final_path == parent:
+    requested_final_path = Path(final_output_dir)
+    try:
+        final_entry_stat = requested_final_path.lstat()
+    except FileNotFoundError:
+        final_entry_stat = None
+    if final_entry_stat is not None and (
+        stat.S_ISLNK(final_entry_stat.st_mode)
+        or (
+            hasattr(requested_final_path, "is_junction")
+            and requested_final_path.is_junction()
+        )
+    ):
+        raise ValueError(
+            "正式输出目录不得为符号链接或 Windows junction。"
+        )
+
+    absolute_final_path = requested_final_path.absolute()
+    resolved_parent = absolute_final_path.parent.resolve(strict=False)
+    final_path = resolved_parent / absolute_final_path.name
+    if final_path == resolved_parent:
         raise ValueError("正式输出目录不得为文件系统根目录。")
-    parent.mkdir(parents=True, exist_ok=True)
-    resolved_parent = parent.resolve(strict=False)
+    resolved_parent.mkdir(parents=True, exist_ok=True)
     staging_prefix = f".{final_path.name}-staging-"
     backup_prefix = f".{final_path.name}-backup-"
     staging_path = Path(
