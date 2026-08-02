@@ -56,6 +56,127 @@ class Houston2020ExperimentTests(unittest.TestCase):
             [],
         )
 
+    def assert_input_output_collision_rejected_before_work(
+        self,
+        *,
+        workload_data: Path,
+        energy_data: Path,
+        output_dir: Path,
+        input_identifier: str,
+        input_path: Path,
+    ) -> None:
+        with (
+            patch(
+                "dc_energy_opt.experiments.houston_2020.load_and_prepare",
+                side_effect=RuntimeError("data loading reached"),
+            ) as load_workload,
+            patch(
+                "dc_energy_opt.experiments.houston_2020."
+                "load_houston_energy_scenario",
+                side_effect=RuntimeError("energy loading reached"),
+            ) as load_energy,
+            patch(
+                "dc_energy_opt.experiments.houston_2020."
+                "run_rolling_day_ahead",
+                side_effect=RuntimeError("solver reached"),
+            ) as solve,
+            patch(
+                "dc_energy_opt.experiments.houston_2020."
+                "staged_run_directory",
+                side_effect=RuntimeError("staging reached"),
+            ) as stage,
+            self.assertRaises(ValueError) as context,
+        ):
+            run_houston_2020_experiment(
+                workload_data=workload_data,
+                energy_data=energy_data,
+                output_dir=output_dir,
+            )
+
+        message = str(context.exception)
+        self.assertIn(input_identifier, message)
+        self.assertIn(str(input_path.resolve(strict=False)), message)
+        self.assertIn("output_dir", message)
+        self.assertIn(str(output_dir.resolve(strict=False)), message)
+        load_workload.assert_not_called()
+        load_energy.assert_not_called()
+        solve.assert_not_called()
+        stage.assert_not_called()
+        self.assertEqual(
+            list(output_dir.parent.glob(f".{output_dir.name}-staging-*")),
+            [],
+        )
+        self.assertEqual(
+            list(output_dir.parent.glob(f".{output_dir.name}-backup-*")),
+            [],
+        )
+
+    def test_workload_inside_output_root_is_rejected_before_work(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            parent = Path(temporary_directory)
+            output_dir = parent / "run"
+            output_dir.mkdir()
+            workload_data = output_dir / "workload.csv"
+            workload_bytes = b"workload\x00\xff"
+            workload_data.write_bytes(workload_bytes)
+            energy_data = parent / "energy.csv"
+            energy_data.write_bytes(b"energy")
+            before = _tree_hashes(output_dir)
+
+            self.assert_input_output_collision_rejected_before_work(
+                workload_data=workload_data,
+                energy_data=energy_data,
+                output_dir=output_dir,
+                input_identifier="workload_data",
+                input_path=workload_data,
+            )
+
+            self.assertEqual(_tree_hashes(output_dir), before)
+            self.assertEqual(workload_data.read_bytes(), workload_bytes)
+
+    def test_energy_inside_output_inputs_is_rejected_before_work(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            parent = Path(temporary_directory)
+            output_dir = parent / "run"
+            energy_data = output_dir / "inputs" / "energy.csv"
+            energy_data.parent.mkdir(parents=True)
+            energy_bytes = b"energy\x00\xff"
+            energy_data.write_bytes(energy_bytes)
+            workload_data = parent / "workload.csv"
+            workload_data.write_bytes(b"workload")
+            before = _tree_hashes(output_dir)
+
+            self.assert_input_output_collision_rejected_before_work(
+                workload_data=workload_data,
+                energy_data=energy_data,
+                output_dir=output_dir,
+                input_identifier="energy_data",
+                input_path=energy_data,
+            )
+
+            self.assertEqual(_tree_hashes(output_dir), before)
+            self.assertEqual(energy_data.read_bytes(), energy_bytes)
+
+    def test_input_equal_to_file_output_is_rejected_before_reading(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            parent = Path(temporary_directory)
+            output_dir = parent / "run.csv"
+            original_bytes = b"input and output\x00\xff"
+            output_dir.write_bytes(original_bytes)
+            energy_data = parent / "energy.csv"
+            energy_data.write_bytes(b"energy")
+
+            self.assert_input_output_collision_rejected_before_work(
+                workload_data=output_dir,
+                energy_data=energy_data,
+                output_dir=output_dir,
+                input_identifier="workload_data",
+                input_path=output_dir,
+            )
+
+            self.assertTrue(output_dir.is_file())
+            self.assertEqual(output_dir.read_bytes(), original_bytes)
+
     def test_full_experiment_publishes_exact_tree_and_results(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_dir = Path(temporary_directory) / "houston_2020_main"

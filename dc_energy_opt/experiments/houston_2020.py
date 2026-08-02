@@ -30,8 +30,19 @@ def run_houston_2020_experiment(
     params: Parameters | None = None,
     show_solver_log: bool = False,
 ) -> ExperimentResult:
-    workload_path = Path(workload_data)
-    energy_path = Path(energy_data)
+    workload_path = Path(workload_data).resolve(strict=False)
+    energy_path = Path(energy_data).resolve(strict=False)
+    output_path = Path(output_dir).resolve(strict=False)
+    for input_identifier, input_path in (
+        ("workload_data", workload_path),
+        ("energy_data", energy_path),
+    ):
+        if input_path == output_path or input_path.is_relative_to(output_path):
+            raise ValueError(
+                f"{input_identifier} 输入路径 {input_path} 与 "
+                f"output_dir {output_path} 冲突：输入不得等于输出目录，"
+                "也不得位于其目录树内。"
+            )
     experiment_params = Parameters() if params is None else params
 
     raw, hourly, representative_day, stress_day = load_and_prepare(
@@ -56,7 +67,7 @@ def run_houston_2020_experiment(
         model_input[column] = analysis_energy[column].to_numpy()
     cpu_arrival = model_input["cpu_arrival_pu"].to_numpy(dtype=float)
 
-    with staged_run_directory(output_dir) as paths:
+    with staged_run_directory(output_path) as paths:
         shutil.copyfile(
             workload_path,
             paths.inputs / "google_2019_28d_5min.csv",
