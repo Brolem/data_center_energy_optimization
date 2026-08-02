@@ -10,11 +10,8 @@ import run_first_version
 import dc_energy_opt
 from dc_energy_opt.config import Parameters
 from dc_energy_opt.data import (
-    build_provisional_energy_scenario,
     load_and_prepare,
-    load_energy_scenario,
     load_houston_energy_scenario,
-    load_phoenix_weather_source,
 )
 from dc_energy_opt.optimization import (
     PendingFlexibleTask,
@@ -27,16 +24,14 @@ from dc_energy_opt.optimization import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCENARIO_PATH = (
-    PROJECT_ROOT / "data" / "houston_2020_main_experiment_energy_scenario.csv"
+    PROJECT_ROOT / "data" / "energy" / "houston_2020_may_hourly.csv"
 )
 
 
 class RefactorRegressionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.csv_path = Path(
-            "data/instance_usage_grouped_300_seconds_month.csv"
-        )
+        cls.csv_path = Path("data/workload/google_2019_28d_5min.csv")
         cls.raw, cls.hourly, cls.representative_day, cls.stress_day = (
             load_and_prepare(cls.csv_path)
         )
@@ -68,11 +63,6 @@ class RefactorRegressionTests(unittest.TestCase):
         }
         package_exports = {
             "Parameters": Parameters,
-            "build_provisional_energy_scenario": (
-                build_provisional_energy_scenario
-            ),
-            "load_phoenix_weather_source": load_phoenix_weather_source,
-            "load_energy_scenario": load_energy_scenario,
             "load_houston_energy_scenario": load_houston_energy_scenario,
             "load_and_prepare": load_and_prepare,
             "build_and_solve": build_and_solve,

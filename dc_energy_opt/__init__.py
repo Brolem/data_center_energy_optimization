@@ -2,11 +2,8 @@
 
 from .config import Parameters
 from .data import (
-    build_provisional_energy_scenario,
     load_and_prepare,
-    load_energy_scenario,
     load_houston_energy_scenario,
-    load_phoenix_weather_source,
 )
 from .optimization import (
     PendingFlexibleTask,
@@ -18,9 +15,6 @@ from .optimization import (
 
 __all__ = [
     "Parameters",
-    "build_provisional_energy_scenario",
-    "load_phoenix_weather_source",
-    "load_energy_scenario",
     "load_houston_energy_scenario",
     "load_and_prepare",
     "build_and_solve",

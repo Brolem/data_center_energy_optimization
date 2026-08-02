@@ -62,15 +62,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--input",
         type=Path,
-        default=Path("data/instance_usage_grouped_300_seconds_month.csv"),
+        default=Path("data/workload/google_2019_28d_5min.csv"),
         help="8064 行 Google 2019 instance usage 聚合 CSV",
     )
     parser.add_argument(
         "--energy-scenario",
         type=Path,
-        default=Path(
-            "data/houston_2020_main_experiment_energy_scenario.csv"
-        ),
+        default=Path("data/energy/houston_2020_may_hourly.csv"),
         help="699 小时 Houston 2020 风光与外生论文分段电价场景 CSV",
     )
     parser.add_argument(

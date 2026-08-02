@@ -18,9 +18,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from dc_energy_opt.config import Parameters
-from dc_energy_opt.data import (
+from dc_energy_opt.data.energy import (
     HOUSTON_ENERGY_SCENARIO_COLUMNS,
-    _qinghai_tou,
+    paper_tou_tariff,
 )
 
 
@@ -190,7 +190,9 @@ def build_scenario(source_dir: Path, params: Parameters) -> pd.DataFrame:
     ]
     if len(hourly) != 699 or hourly.isna().any().any():
         raise ValueError("Houston 主实验小时场景必须包含 699 行且无缺失值。")
-    periods, prices = _qinghai_tou(hourly.index.hour.to_numpy(dtype=int))
+    periods, prices = paper_tou_tariff(
+        hourly.index.hour.to_numpy(dtype=int)
+    )
     scenario = hourly.reset_index()
     scenario["timestamp_lst"] = scenario["timestamp_lst"].dt.strftime(
         "%Y-%m-%dT%H:%M:%S"
@@ -211,7 +213,8 @@ def parse_args() -> argparse.Namespace:
         default=(
             PROJECT_ROOT
             / "data"
-            / "houston_2020_main_experiment_energy_scenario.csv"
+            / "energy"
+            / "houston_2020_may_hourly.csv"
         ),
     )
     return parser.parse_args()

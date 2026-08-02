@@ -5,7 +5,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .config import Parameters
+from dc_energy_opt.config import Parameters
+from dc_energy_opt.data.energy import paper_tou_tariff
 
 
 ENERGY_SCENARIO_COLUMNS = [
@@ -22,14 +23,6 @@ WEATHER_SOURCE_COLUMNS = [
     "timestamp_lst",
     "solar_irradiance_wh_m2",
     "wind_speed_50m_m_s",
-]
-
-HOUSTON_ENERGY_SCENARIO_COLUMNS = [
-    "timestamp_lst",
-    "solar_available_mw",
-    "wind_available_mw",
-    "tou_period",
-    "electricity_price_cny_per_kwh",
 ]
 
 
@@ -80,91 +73,6 @@ def load_phoenix_weather_source(csv_path: Path) -> pd.DataFrame:
     return source
 
 
-def load_houston_energy_scenario(
-    csv_path: Path,
-    params: Parameters,
-) -> pd.DataFrame:
-    scenario = pd.read_csv(csv_path)
-    if list(scenario.columns) != HOUSTON_ENERGY_SCENARIO_COLUMNS:
-        raise ValueError(
-            "Houston 能源场景字段应严格为: "
-            f"{HOUSTON_ENERGY_SCENARIO_COLUMNS}"
-        )
-    if len(scenario) != 699:
-        raise ValueError("Houston 主实验能源场景必须恰好包含 699 个小时。")
-    if scenario.isna().any().any():
-        raise ValueError("Houston 2020 能源场景存在缺失值。")
-
-    scenario = scenario.copy()
-    try:
-        scenario["timestamp_lst"] = pd.to_datetime(
-            scenario["timestamp_lst"],
-            format="%Y-%m-%dT%H:%M:%S",
-            errors="raise",
-        )
-        for column in (
-            "solar_available_mw",
-            "wind_available_mw",
-            "electricity_price_cny_per_kwh",
-        ):
-            scenario[column] = pd.to_numeric(
-                scenario[column],
-                errors="raise",
-            )
-    except (TypeError, ValueError) as error:
-        raise ValueError("Houston 2020 能源场景包含无法解析的数据。") from error
-
-    expected_timestamps = pd.date_range(
-        "2020-04-30 00:00:00",
-        "2020-05-29 02:00:00",
-        freq="h",
-    )
-    if scenario["timestamp_lst"].duplicated().any():
-        raise ValueError("timestamp_lst 不得重复。")
-    if not scenario["timestamp_lst"].equals(
-        pd.Series(expected_timestamps, name="timestamp_lst")
-    ):
-        raise ValueError(
-            "timestamp_lst 必须按 UTC-06 本地标准时间从 2020-04-30 00:00 "
-            "连续有序至 2020-05-29 02:00。"
-        )
-
-    numeric_columns = [
-        "solar_available_mw",
-        "wind_available_mw",
-        "electricity_price_cny_per_kwh",
-    ]
-    numeric_values = scenario[numeric_columns].to_numpy(dtype=float)
-    if not np.isfinite(numeric_values).all():
-        raise ValueError("Houston 2020 能源场景数值必须为有限值。")
-    if (numeric_values < 0.0).any():
-        raise ValueError("Houston 2020 能源场景数值不得为负数。")
-    if (
-        scenario["solar_available_mw"]
-        > params.solar_inverter_capacity_mw + 1e-9
-    ).any():
-        raise ValueError("solar_available_mw 不得超过光伏交流逆变器容量。")
-    if (
-        scenario["wind_available_mw"]
-        > params.wind_capacity_mw + 1e-9
-    ).any():
-        raise ValueError("wind_available_mw 不得超过风电容量。")
-
-    periods, prices = _qinghai_tou(
-        scenario["timestamp_lst"].dt.hour.to_numpy(dtype=int)
-    )
-    if not scenario["tou_period"].equals(
-        pd.Series(periods, name="tou_period")
-    ):
-        raise ValueError("tou_period 与原分段电价时段不一致。")
-    if not np.array_equal(
-        scenario["electricity_price_cny_per_kwh"].to_numpy(dtype=float),
-        prices,
-    ):
-        raise ValueError("electricity_price_cny_per_kwh 与原分段电价不一致。")
-    return scenario
-
-
 def solar_available_power_mw(
     solar_irradiance_wh_m2: np.ndarray,
     params: Parameters,
@@ -203,25 +111,6 @@ def wind_available_power_mw(
     return params.wind_capacity_mw * capacity_factor
 
 
-def _qinghai_tou(hours: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    hour_values = np.asarray(hours, dtype=int)
-    valley = (hour_values >= 0) & (hour_values < 8)
-    peak = ((hour_values >= 9) & (hour_values < 13)) | (
-        (hour_values >= 18) & (hour_values < 23)
-    )
-    periods = np.select(
-        [valley, peak],
-        ["valley", "peak"],
-        default="flat",
-    )
-    prices = np.select(
-        [valley, peak],
-        [0.1804, 0.7174],
-        default=0.4489,
-    )
-    return periods, prices
-
-
 def build_provisional_energy_scenario(
     source_csv_path: Path,
     params: Parameters,
@@ -249,7 +138,7 @@ def build_provisional_energy_scenario(
         .mean()
     )
 
-    periods, prices = _qinghai_tou(
+    periods, prices = paper_tou_tariff(
         scenario["hour"].to_numpy(dtype=int)
     )
     scenario["tou_period"] = periods
@@ -290,7 +179,7 @@ def load_energy_scenario(
     if (scenario["wind_available_mw"] > params.wind_capacity_mw).any():
         raise ValueError("wind_available_mw 不得超过风电容量。")
 
-    period_values, expected_prices = _qinghai_tou(
+    period_values, expected_prices = paper_tou_tariff(
         scenario["hour"].to_numpy(dtype=int)
     )
     expected_periods = pd.Series(
@@ -323,46 +212,3 @@ def load_energy_scenario(
             if not matches:
                 raise ValueError(f"{column} 与气象源重建结果不一致。")
     return scenario
-
-
-def load_and_prepare(csv_path: Path) -> tuple[pd.DataFrame, pd.DataFrame, int, int]:
-    raw = pd.read_csv(csv_path)
-    expected = {
-        "avg_cpu",
-        "avg_mem",
-        "avg_assigned_mem",
-        "avg_cycles_per_instruction",
-    }
-    missing_columns = expected.difference(raw.columns)
-    if missing_columns:
-        raise ValueError(f"缺少字段: {sorted(missing_columns)}")
-    if len(raw) % 288 != 0:
-        raise ValueError("行数不是 288 的整数倍，无法按每天 5 分钟数据切分。")
-    if raw[list(expected)].isna().any().any():
-        raise ValueError("原始数据存在缺失值，请先处理。")
-
-    raw = raw.copy()
-    raw["step_5min"] = np.arange(len(raw))
-    raw["day"] = raw["step_5min"] // 288 + 1
-    raw["hour"] = (raw["step_5min"] % 288) // 12
-    raw["step_in_hour"] = raw["step_5min"] % 12
-
-    hourly = (
-        raw.groupby(["day", "hour"], as_index=False)
-        .agg(
-            avg_cpu=("avg_cpu", "mean"),
-            avg_mem=("avg_mem", "mean"),
-            avg_assigned_mem=("avg_assigned_mem", "mean"),
-            avg_cycles_per_instruction=("avg_cycles_per_instruction", "mean"),
-        )
-        .sort_values(["day", "hour"])
-        .reset_index(drop=True)
-    )
-
-    profiles = hourly.pivot(index="day", columns="hour", values="avg_cpu")
-    mean_profile = profiles.mean(axis=0)
-    representative_day = int(
-        np.sqrt(((profiles - mean_profile) ** 2).mean(axis=1)).idxmin()
-    )
-    stress_day = int(profiles.std(axis=1).idxmax())
-    return raw, hourly, representative_day, stress_day

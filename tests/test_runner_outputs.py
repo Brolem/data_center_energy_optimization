@@ -30,10 +30,8 @@ from dc_energy_opt.reporting import LEGACY_PLOT_FILENAMES, make_plots
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-INPUT_PATH = Path("data/instance_usage_grouped_300_seconds_month.csv")
-SCENARIO_PATH = Path(
-    "data/houston_2020_main_experiment_energy_scenario.csv"
-)
+INPUT_PATH = Path("data/workload/google_2019_28d_5min.csv")
+SCENARIO_PATH = Path("data/energy/houston_2020_may_hourly.csv")
 CASE_ORDER = [
     "renewables_only",
     "renewables_shift",

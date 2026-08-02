@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from dc_energy_opt.config import Parameters
-from dc_energy_opt.data import _qinghai_tou
+from dc_energy_opt.data import paper_tou_tariff
 from dc_energy_opt.optimization import PendingFlexibleTask, build_and_solve
 from dc_energy_opt.optimization.rolling_day_ahead import (
     _prewarm_carry_in,
@@ -33,7 +33,9 @@ class RollingDayAheadTests(unittest.TestCase):
             periods=24 + analysis_days * 24 + 3,
             freq="h",
         )
-        periods, prices = _qinghai_tou(timestamps.hour.to_numpy(dtype=int))
+        periods, prices = paper_tou_tariff(
+            timestamps.hour.to_numpy(dtype=int)
+        )
         return pd.DataFrame(
             {
                 "timestamp_lst": timestamps,
