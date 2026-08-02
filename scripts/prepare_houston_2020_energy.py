@@ -24,6 +24,9 @@ from dc_energy_opt.data.energy import (
 )
 
 
+CSV_LINETERMINATOR = "\r\n"
+
+
 SOURCE_HASHES = {
     "wind_data_houston.csv": (
         "10FB3E98B9773039943B5A56B4122BC75BE00D936B4B1D16608D43E4DE8F008F"
@@ -224,7 +227,11 @@ def main() -> None:
     args = parse_args()
     scenario = build_scenario(args.source_dir, Parameters())
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    scenario.to_csv(args.output, index=False)
+    scenario.to_csv(
+        args.output,
+        index=False,
+        lineterminator=CSV_LINETERMINATOR,
+    )
     print(
         f"wrote {len(scenario)} rows to {args.output} "
         f"(solar_max={scenario['solar_available_mw'].max():.6f} MW, "
