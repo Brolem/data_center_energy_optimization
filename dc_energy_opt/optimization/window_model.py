@@ -2,26 +2,14 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from pyscipopt import Model, quicksum
 
-from .config import Parameters
-
-
-@dataclass(frozen=True)
-class PendingFlexibleTask:
-    origin_hour: int
-    remaining_cpu_pu: float
-
-
-@dataclass(frozen=True)
-class WindowSolveState:
-    stored_energy_mwh: float
-    pending_flexible_tasks: tuple[PendingFlexibleTask, ...]
+from ..config import Parameters
+from .types import PendingFlexibleTask, WindowSolveState
 
 
 _DEFAULT_TERMINAL_STORED_ENERGY = object()

@@ -6,9 +6,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .config import Parameters
-from .data import HOUSTON_ENERGY_SCENARIO_COLUMNS
-from .model import PendingFlexibleTask, build_and_solve
+from ..config import Parameters
+from ..data import HOUSTON_ENERGY_SCENARIO_COLUMNS
+from .types import PendingFlexibleTask
+from .window_model import build_and_solve
 
 
 ROLLING_CASES = (

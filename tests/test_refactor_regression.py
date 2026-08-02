@@ -16,12 +16,13 @@ from dc_energy_opt.data import (
     load_houston_energy_scenario,
     load_phoenix_weather_source,
 )
-from dc_energy_opt.model import (
+from dc_energy_opt.optimization import (
     PendingFlexibleTask,
+    ROLLING_CASES,
     WindowSolveState,
     build_and_solve,
+    run_rolling_day_ahead,
 )
-from dc_energy_opt.rolling import ROLLING_CASES, run_rolling_day_ahead
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

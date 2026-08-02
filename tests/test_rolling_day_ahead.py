@@ -12,8 +12,11 @@ import pandas as pd
 
 from dc_energy_opt.config import Parameters
 from dc_energy_opt.data import _qinghai_tou
-from dc_energy_opt.model import PendingFlexibleTask, build_and_solve
-from dc_energy_opt.rolling import _prewarm_carry_in, run_rolling_day_ahead
+from dc_energy_opt.optimization import PendingFlexibleTask, build_and_solve
+from dc_energy_opt.optimization.rolling_day_ahead import (
+    _prewarm_carry_in,
+    run_rolling_day_ahead,
+)
 
 
 class RollingDayAheadTests(unittest.TestCase):

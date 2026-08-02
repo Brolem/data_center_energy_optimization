@@ -8,8 +8,13 @@ from .data import (
     load_houston_energy_scenario,
     load_phoenix_weather_source,
 )
-from .model import PendingFlexibleTask, WindowSolveState, build_and_solve
-from .rolling import ROLLING_CASES, run_rolling_day_ahead
+from .optimization import (
+    PendingFlexibleTask,
+    ROLLING_CASES,
+    WindowSolveState,
+    build_and_solve,
+    run_rolling_day_ahead,
+)
 
 __all__ = [
     "Parameters",

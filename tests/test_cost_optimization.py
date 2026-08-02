@@ -15,11 +15,11 @@ from scripts.build_houston_2020_energy_scenario import (
     _sha256_normalized_text,
 )
 from dc_energy_opt.config import Parameters
-from dc_energy_opt.model import (
+from dc_energy_opt.optimization import (
     PendingFlexibleTask,
-    _solve_status_is_accepted,
     build_and_solve,
 )
+from dc_energy_opt.optimization.window_model import _solve_status_is_accepted
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

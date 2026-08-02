@@ -16,8 +16,11 @@ from dc_energy_opt.data import (
     load_and_prepare,
     load_houston_energy_scenario,
 )
-from dc_energy_opt.model import build_and_solve
-from dc_energy_opt.rolling import ROLLING_CASES, run_rolling_day_ahead
+from dc_energy_opt.optimization import (
+    ROLLING_CASES,
+    build_and_solve,
+    run_rolling_day_ahead,
+)
 from dc_energy_opt.reporting import (
     LEGACY_PLOT_FILENAMES,
     make_plots,
