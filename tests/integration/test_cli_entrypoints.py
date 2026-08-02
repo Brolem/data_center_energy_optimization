@@ -150,9 +150,22 @@ class CliEntrypointTests(unittest.TestCase):
 
         self.assertEqual(run_experiment.call_args, formal_call)
         self.assertIn(
-            "run_first_version.py 已迁移，请改用 run_day_ahead_experiment.py。",
+            "run_first_version.py is deprecated; use "
+            "run_day_ahead_experiment.py.",
             stdout.getvalue(),
         )
+
+    def test_legacy_migration_notice_is_ascii_safe(self) -> None:
+        with (
+            patch(
+                "run_day_ahead_experiment.run_houston_2020_experiment",
+                return_value=self._experiment(),
+            ),
+            patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            run_first_version.main([])
+
+        self.assertTrue(stdout.getvalue().isascii())
 
     def test_legacy_dash_prefixed_paths_reach_the_formal_experiment(self) -> None:
         with (

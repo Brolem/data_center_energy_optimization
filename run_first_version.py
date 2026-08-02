@@ -39,7 +39,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.show_scip_log:
         formal_arguments.append("--show-solver-log")
 
-    print("run_first_version.py 已迁移，请改用 run_day_ahead_experiment.py。")
+    print(
+        "run_first_version.py is deprecated; use "
+        "run_day_ahead_experiment.py."
+    )
     run_formal_experiment(formal_arguments)
 
 
