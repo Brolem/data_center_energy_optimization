@@ -104,7 +104,7 @@ class RefactorRegressionTests(unittest.TestCase):
                     case_name=case_name,
                     enable_shift=enable_shift,
                     enable_storage=enable_storage,
-                    output_dir=output_dir,
+                    model_output_dir=output_dir,
                     show_log=False,
                 )
                 metrics_by_case[case_name] = metrics

@@ -365,6 +365,7 @@ class CostOptimizationModelTests(unittest.TestCase):
         enable_storage: bool = False,
         enable_renewables: bool = True,
         case_name: str,
+        lp_output_dir: Path | None = None,
     ) -> tuple[pd.DataFrame, dict]:
         return build_and_solve(
             cpu_arrival=(
@@ -392,8 +393,24 @@ class CostOptimizationModelTests(unittest.TestCase):
             enable_storage=enable_storage,
             enable_renewables=enable_renewables,
             case_name=case_name,
-            output_dir=self.output_dir,
+            lp_output_dir=lp_output_dir or self.output_dir,
             show_log=False,
+        )
+
+    def test_lp_files_use_stage_names_inside_window_directory(self) -> None:
+        lp_output_dir = self.output_dir / "day_01"
+        lp_output_dir.mkdir()
+        self.solve(
+            case_name="lp_path_layout",
+            lp_output_dir=lp_output_dir,
+        )
+        self.assertTrue((lp_output_dir / "stage_1_cost.lp").is_file())
+        self.assertTrue((lp_output_dir / "stage_2_delay.lp").is_file())
+        self.assertFalse(
+            (lp_output_dir / "lp_path_layout_primary.lp").exists()
+        )
+        self.assertFalse(
+            (lp_output_dir / "lp_path_layout_secondary.lp").exists()
         )
 
     def test_primary_costs_are_independently_recomputed_in_cny(self) -> None:
@@ -498,7 +515,7 @@ class CostOptimizationModelTests(unittest.TestCase):
             )
         )
         self.assertTrue(
-            (self.output_dir / "primary_cost_recompute_primary.lp").is_file()
+            (self.output_dir / "stage_1_cost.lp").is_file()
         )
         self.assertIn(
             "battery_om_cost_expr", build_and_solve.__code__.co_varnames
@@ -651,7 +668,7 @@ class CostOptimizationModelTests(unittest.TestCase):
             enable_storage=True,
             enable_renewables=False,
             case_name="explicit_storage_boundaries",
-            output_dir=self.output_dir,
+            lp_output_dir=self.output_dir,
             show_log=False,
             initial_stored_energy_mwh=0.8,
             terminal_stored_energy_mwh=1.2,
@@ -682,7 +699,7 @@ class CostOptimizationModelTests(unittest.TestCase):
             "enable_shift": True,
             "enable_storage": False,
             "enable_renewables": False,
-            "output_dir": self.output_dir,
+            "lp_output_dir": self.output_dir,
             "show_log": False,
             "flex_arrival_hours": 24,
             "commit_hours": 24,
@@ -836,10 +853,8 @@ class CostOptimizationModelTests(unittest.TestCase):
                 <= 1.0 + 1e-8
             ).all()
         )
-        for stage in ("primary", "secondary"):
-            lp_text = (
-                self.output_dir / f"peak_valley_storage_{stage}.lp"
-            ).read_text(encoding="utf-8")
+        for filename in ("stage_1_cost.lp", "stage_2_delay.lp"):
+            lp_text = (self.output_dir / filename).read_text(encoding="utf-8")
             self.assertNotIn("storage_active_period_limit", lp_text)
         expected_hourly_om = (
             self.params.battery_om_cost_cny_per_kwh
@@ -891,10 +906,10 @@ class CostOptimizationModelTests(unittest.TestCase):
         )
 
         self.assertTrue(
-            (self.output_dir / "lexicographic_delay_primary.lp").is_file()
+            (self.output_dir / "stage_1_cost.lp").is_file()
         )
         self.assertTrue(
-            (self.output_dir / "lexicographic_delay_secondary.lp").is_file()
+            (self.output_dir / "stage_2_delay.lp").is_file()
         )
         self.assertEqual(metrics["primary_solve_status"], "optimal")
         self.assertEqual(metrics["secondary_solve_status"], "optimal")

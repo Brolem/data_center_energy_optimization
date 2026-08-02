@@ -345,7 +345,7 @@ def main() -> None:
                 case_name=case_name,
                 enable_shift=enable_shift,
                 enable_storage=enable_storage,
-                output_dir=output_dir,
+                model_output_dir=output_dir,
                 show_log=args.show_scip_log,
             )
             results.append(result)

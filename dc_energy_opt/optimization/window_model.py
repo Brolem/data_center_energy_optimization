@@ -65,7 +65,7 @@ def build_and_solve(
     enable_storage: bool,
     enable_renewables: bool,
     case_name: str,
-    output_dir: Path,
+    lp_output_dir: Path,
     show_log: bool,
     initial_stored_energy_mwh: float | None = None,
     terminal_stored_energy_mwh: float | None | object = (
@@ -488,8 +488,9 @@ def build_and_solve(
     )
     model.setObjective(primary_cost_expr, "minimize")
 
-    output_dir = Path(output_dir)
-    model.writeProblem(str(output_dir / f"{case_name}_primary.lp"))
+    lp_output_dir = Path(lp_output_dir)
+    lp_output_dir.mkdir(parents=True, exist_ok=True)
+    model.writeProblem(str(lp_output_dir / "stage_1_cost.lp"))
     primary_solve_started = time.perf_counter()
     model.optimize()
     primary_solve_time_s = time.perf_counter() - primary_solve_started
@@ -512,7 +513,7 @@ def build_and_solve(
         name="primary_cost_tolerance",
     )
     model.setObjective(total_task_delay_expr, "minimize")
-    model.writeProblem(str(output_dir / f"{case_name}_secondary.lp"))
+    model.writeProblem(str(lp_output_dir / "stage_2_delay.lp"))
     secondary_solve_started = time.perf_counter()
     model.optimize()
     secondary_solve_time_s = time.perf_counter() - secondary_solve_started

@@ -76,7 +76,7 @@ def _prewarm_carry_in(
     energy_scenario: pd.DataFrame,
     params: Parameters,
     case_name: str,
-    output_dir: Path,
+    model_output_dir: Path,
     show_log: bool,
 ) -> tuple[tuple[PendingFlexibleTask, ...], dict]:
     warmup_workload = np.concatenate((cpu_arrival[-24:], cpu_arrival[:3]))
@@ -97,7 +97,7 @@ def _prewarm_carry_in(
         enable_storage=False,
         enable_renewables=True,
         case_name=f"{case_name}_warmup",
-        output_dir=output_dir,
+        lp_output_dir=model_output_dir / "warmup",
         show_log=show_log,
         flex_arrival_hours=24,
         commit_hours=24,
@@ -114,7 +114,7 @@ def _coordinate_soc_boundaries(
     case_name: str,
     enable_shift: bool,
     carry_in_tasks: tuple[PendingFlexibleTask, ...],
-    output_dir: Path,
+    model_output_dir: Path,
     show_log: bool,
 ) -> tuple[list[float], list[float], dict]:
     coordinator_cpu = np.concatenate((cpu_arrival, np.zeros(3)))
@@ -135,7 +135,7 @@ def _coordinate_soc_boundaries(
         enable_storage=True,
         enable_renewables=True,
         case_name=f"{case_name}_soc_coordination",
-        output_dir=output_dir,
+        lp_output_dir=model_output_dir / "soc_coordination",
         show_log=show_log,
         initial_stored_energy_mwh=(
             params.battery_soc_initial * params.battery_energy_mwh
@@ -166,15 +166,15 @@ def run_rolling_day_ahead(
     case_name: str,
     enable_shift: bool,
     enable_storage: bool,
-    output_dir: Path,
+    model_output_dir: Path,
     show_log: bool,
 ) -> tuple[pd.DataFrame, dict, pd.DataFrame]:
     workload, scenario, analysis_days = _validate_rolling_inputs(
         cpu_arrival,
         energy_scenario,
     )
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    model_output_dir = Path(model_output_dir)
+    model_output_dir.mkdir(parents=True, exist_ok=True)
 
     carry_in_tasks: tuple[PendingFlexibleTask, ...] = ()
     warmup_metrics: dict | None = None
@@ -184,7 +184,7 @@ def run_rolling_day_ahead(
             energy_scenario=scenario,
             params=params,
             case_name=case_name,
-            output_dir=output_dir,
+            model_output_dir=model_output_dir,
             show_log=show_log,
         )
     warmup_carry_in_cpu = float(
@@ -207,7 +207,7 @@ def run_rolling_day_ahead(
             case_name=case_name,
             enable_shift=enable_shift,
             carry_in_tasks=carry_in_tasks,
-            output_dir=output_dir,
+            model_output_dir=model_output_dir,
             show_log=show_log,
         )
 
@@ -253,7 +253,9 @@ def run_rolling_day_ahead(
             enable_storage=enable_storage,
             enable_renewables=True,
             case_name=f"{case_name}_day_{day_number:02d}",
-            output_dir=output_dir,
+            lp_output_dir=(
+                model_output_dir / f"day_{day_number:02d}"
+            ),
             show_log=show_log,
             initial_stored_energy_mwh=stored_energy_mwh,
             terminal_stored_energy_mwh=terminal_energy,

@@ -79,7 +79,7 @@ class RollingDayAheadTests(unittest.TestCase):
             current_result, _, current_state = build_and_solve(
                 cpu_arrival=current_window_arrival,
                 case_name="preview_arrival_current_window",
-                output_dir=output_dir,
+                lp_output_dir=output_dir,
                 **common,
             )
 
@@ -88,7 +88,7 @@ class RollingDayAheadTests(unittest.TestCase):
             next_result, next_metrics, next_state = build_and_solve(
                 cpu_arrival=next_window_arrival,
                 case_name="preview_arrival_next_window",
-                output_dir=output_dir,
+                lp_output_dir=output_dir,
                 **common,
             )
 
@@ -131,7 +131,7 @@ class RollingDayAheadTests(unittest.TestCase):
                 case_name="renewables_only",
                 enable_shift=False,
                 enable_storage=False,
-                output_dir=Path(temporary_directory),
+                model_output_dir=Path(temporary_directory),
                 show_log=False,
             )
 
@@ -166,6 +166,41 @@ class RollingDayAheadTests(unittest.TestCase):
         self.assertGreater(metrics["settlement_tail_operating_cost_cny"], 0.0)
         self.assertAlmostEqual(metrics["cpu_conservation_error"], 0.0)
 
+    def test_rolling_model_outputs_are_grouped_by_window(self) -> None:
+        cpu_arrival = np.full(48, 0.55)
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            model_output_dir = Path(temporary_directory) / "joint"
+            run_rolling_day_ahead(
+                cpu_arrival=cpu_arrival,
+                energy_scenario=self.energy_scenario(2),
+                params=self.params,
+                case_name="joint",
+                enable_shift=True,
+                enable_storage=True,
+                model_output_dir=model_output_dir,
+                show_log=False,
+            )
+
+            self.assertEqual(
+                sorted(path.name for path in model_output_dir.iterdir()),
+                ["day_01", "day_02", "soc_coordination", "warmup"],
+            )
+            for window_name in (
+                "warmup",
+                "soc_coordination",
+                "day_01",
+                "day_02",
+            ):
+                self.assertEqual(
+                    sorted(
+                        path.name
+                        for path in (model_output_dir / window_name).iterdir()
+                    ),
+                    ["stage_1_cost.lp", "stage_2_delay.lp"],
+                )
+            self.assertEqual(list(model_output_dir.glob("*.lp")), [])
+            self.assertEqual(len(list(model_output_dir.rglob("*.lp"))), 8)
+
     def test_joint_run_preserves_cross_day_soc_and_task_constraints(self) -> None:
         cpu_arrival = np.full(48, 0.55)
         cpu_arrival[23] = 0.90
@@ -179,7 +214,7 @@ class RollingDayAheadTests(unittest.TestCase):
                 case_name="joint",
                 enable_shift=True,
                 enable_storage=True,
-                output_dir=Path(temporary_directory),
+                model_output_dir=Path(temporary_directory),
                 show_log=False,
             )
 
