@@ -91,7 +91,7 @@ def _prewarm_carry_in(
     case_name: str,
     output_dir: Path,
     show_log: bool,
-) -> tuple[PendingFlexibleTask, ...]:
+) -> tuple[tuple[PendingFlexibleTask, ...], dict]:
     warmup_workload = np.concatenate((cpu_arrival[-24:], cpu_arrival[:3]))
     warmup_energy = energy_scenario.iloc[:27].reset_index(drop=True)
     _, metrics, state = build_and_solve(
@@ -271,6 +271,8 @@ def run_rolling_day_ahead(
             initial_stored_energy_mwh=stored_energy_mwh,
             terminal_stored_energy_mwh=terminal_energy,
             committed_stored_energy_mwh=committed_energy,
+            # 次日 3 小时前视只承担 70% 非柔性最低负荷；其 30% 柔性任务不在当前截断窗口创建，
+            # 而由下一日窗口在完整到期域内创建。
             flex_arrival_hours=24,
             carry_in_tasks=carry_in_tasks,
             commit_hours=24,

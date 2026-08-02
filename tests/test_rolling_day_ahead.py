@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import inspect
 import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from typing import get_type_hints
 
 import numpy as np
 import pandas as pd
 
 from scip_first_version.config import Parameters
 from scip_first_version.data import _qinghai_tou
-from scip_first_version.rolling import run_rolling_day_ahead
+from scip_first_version.model import PendingFlexibleTask, build_and_solve
+from scip_first_version.rolling import _prewarm_carry_in, run_rolling_day_ahead
 
 
 class RollingDayAheadTests(unittest.TestCase):
@@ -36,6 +39,81 @@ class RollingDayAheadTests(unittest.TestCase):
                 "tou_period": periods,
                 "electricity_price_cny_per_kwh": prices,
             }
+        )
+
+    def test_prewarm_carry_in_return_annotation_matches_structure(self) -> None:
+        return_annotation = get_type_hints(_prewarm_carry_in)["return"]
+
+        self.assertEqual(
+            return_annotation,
+            tuple[tuple[PendingFlexibleTask, ...], dict],
+        )
+
+    def test_preview_flexible_arrival_is_created_only_next_day(self) -> None:
+        horizon = 27
+        preview_arrival = 0.90
+        nonflex_cpu = (1.0 - self.params.flex_ratio) * preview_arrival
+        common = {
+            "solar_available_mw": np.zeros(horizon),
+            "wind_available_mw": np.zeros(horizon),
+            "electricity_price_cny_per_kwh": np.full(horizon, 0.4489),
+            "params": self.params,
+            "enable_shift": True,
+            "enable_storage": False,
+            "enable_renewables": False,
+            "show_log": False,
+            "flex_arrival_hours": 24,
+            "commit_hours": 24,
+            "return_state": True,
+        }
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            current_window_arrival = np.zeros(horizon)
+            current_window_arrival[24] = preview_arrival
+            current_result, _, current_state = build_and_solve(
+                cpu_arrival=current_window_arrival,
+                case_name="preview_arrival_current_window",
+                output_dir=output_dir,
+                **common,
+            )
+
+            next_window_arrival = np.zeros(horizon)
+            next_window_arrival[0] = preview_arrival
+            next_result, next_metrics, next_state = build_and_solve(
+                cpu_arrival=next_window_arrival,
+                case_name="preview_arrival_next_window",
+                output_dir=output_dir,
+                **common,
+            )
+
+        self.assertAlmostEqual(
+            float(current_result.loc[24, "cpu_scheduled_pu"]),
+            nonflex_cpu,
+        )
+        self.assertEqual(current_state.pending_flexible_tasks, ())
+        self.assertAlmostEqual(
+            float(next_result["cpu_scheduled_pu"].sum()),
+            preview_arrival,
+        )
+        self.assertAlmostEqual(
+            next_metrics["committed_flexible_cpu_pu_hours"],
+            self.params.flex_ratio * preview_arrival,
+        )
+        self.assertEqual(next_state.pending_flexible_tasks, ())
+
+        rolling_source = inspect.getsource(run_rolling_day_ahead)
+        self.assertIn(
+            "次日 3 小时前视只承担 70% 非柔性最低负荷",
+            rolling_source,
+        )
+        self.assertIn(
+            "其 30% 柔性任务不在当前截断窗口创建",
+            rolling_source,
+        )
+        self.assertIn(
+            "由下一日窗口在完整到期域内创建",
+            rolling_source,
         )
 
     def test_two_day_run_marks_analysis_and_settlement_tail(self) -> None:
