@@ -41,11 +41,6 @@ PLOT_FILENAMES = [
     "renewable_dispatch.png",
     "cost_breakdown.png",
 ]
-LEGACY_PLOT_FILENAMES = [
-    "first_version_results.png",
-    "total_variation_comparison.png",
-    "cost_optimization_results.png",
-]
 HOURLY_NUMERIC_COLUMNS = [
     "hour",
     "cpu_arrival_pu",
@@ -1155,10 +1150,6 @@ def make_plots(
 ) -> None:
     _validate_plot_inputs(hourly_results, metrics)
     output_dir.mkdir(parents=True, exist_ok=True)
-    for filename in LEGACY_PLOT_FILENAMES:
-        legacy_path = output_dir / filename
-        if legacy_path.is_file():
-            legacy_path.unlink()
 
     _draw_day_ahead_power_results(
         hourly_results,

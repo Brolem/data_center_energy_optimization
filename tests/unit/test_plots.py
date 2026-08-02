@@ -3,10 +3,11 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
-from PIL import Image
+from PIL import Image, ImageDraw
 
 import dc_energy_opt.reporting.plots as plots
 from dc_energy_opt.reporting.plots import PLOT_FILENAMES, make_plots
@@ -88,6 +89,7 @@ class PlotTests(unittest.TestCase):
                 "cost_breakdown.png",
             ],
         )
+        self.assertFalse(hasattr(plots, "LEGACY_PLOT_FILENAMES"))
 
     def test_make_plots_handles_complete_all_zero_inputs(self) -> None:
         hourly_results, metrics = _zero_plot_inputs()
@@ -231,6 +233,47 @@ class PlotTests(unittest.TestCase):
         self.assertEqual(plots._normalized_nonnegative_cost(12.5), 12.5)
         with self.assertRaises(ValueError):
             plots._normalized_nonnegative_cost(-1.000001e-10)
+
+    def test_boundary_negative_costs_render_as_zero_without_negative_zero(
+        self,
+    ) -> None:
+        hourly_results, metrics = _zero_plot_inputs()
+        component_columns = [
+            "grid_purchase_cost_cny",
+            "solar_om_cost_cny",
+            "wind_om_cost_cny",
+            "battery_om_cost_cny",
+            "battery_degradation_cost_cny",
+        ]
+        metrics.loc[:, component_columns] = -1e-10
+        metrics.loc[:, "operating_cost_cny"] = 0.0
+        drawn_text: list[str] = []
+        original_text = ImageDraw.ImageDraw.text
+
+        def record_text(
+            image_draw: ImageDraw.ImageDraw,
+            xy: tuple[float, float] | tuple[int, int],
+            text: str,
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            drawn_text.append(str(text))
+            original_text(image_draw, xy, text, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory) / "plots"
+            with patch.object(
+                ImageDraw.ImageDraw,
+                "text",
+                new=record_text,
+            ):
+                make_plots(hourly_results, metrics, output_dir)
+
+            self.assertEqual(drawn_text.count("CNY 0"), len(CASE_ORDER))
+            self.assertNotIn("CNY -0", drawn_text)
+            for filename in PLOT_FILENAMES:
+                with Image.open(output_dir / filename) as image:
+                    image.verify()
 
 
 if __name__ == "__main__":
