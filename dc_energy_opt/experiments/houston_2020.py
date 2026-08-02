@@ -51,37 +51,48 @@ def run_houston_2020_experiment(
             )
     experiment_params = Parameters() if params is None else params
 
-    raw, hourly, representative_day, stress_day = load_and_prepare(
-        workload_path
-    )
-    energy_scenario = load_houston_energy_scenario(
-        energy_path,
-        experiment_params,
-    )
-    max_day = int(hourly["day"].max())
-    ordered_hourly = hourly.sort_values(["day", "hour"]).reset_index(
-        drop=True
-    )
-    if max_day != 28 or len(ordered_hourly) != 672:
-        raise ValueError("主实验算力数据必须严格包含 28 个完整日、672 个小时。")
-
-    analysis_energy = energy_scenario.iloc[24:696].reset_index(drop=True)
-    model_input = ordered_hourly.rename(
-        columns={"avg_cpu": "cpu_arrival_pu"}
-    ).copy()
-    for column in energy_scenario.columns:
-        model_input[column] = analysis_energy[column].to_numpy()
-    cpu_arrival = model_input["cpu_arrival_pu"].to_numpy(dtype=float)
-
     with staged_run_directory(output_path) as paths:
+        workload_snapshot = (
+            paths.inputs / "google_2019_28d_5min.csv"
+        )
+        energy_snapshot = (
+            paths.inputs / "houston_2020_may_hourly.csv"
+        )
         shutil.copyfile(
             workload_path,
-            paths.inputs / "google_2019_28d_5min.csv",
+            workload_snapshot,
         )
         shutil.copyfile(
             energy_path,
-            paths.inputs / "houston_2020_may_hourly.csv",
+            energy_snapshot,
         )
+
+        raw, hourly, representative_day, stress_day = load_and_prepare(
+            workload_snapshot
+        )
+        energy_scenario = load_houston_energy_scenario(
+            energy_snapshot,
+            experiment_params,
+        )
+        max_day = int(hourly["day"].max())
+        ordered_hourly = hourly.sort_values(
+            ["day", "hour"]
+        ).reset_index(drop=True)
+        if max_day != 28 or len(ordered_hourly) != 672:
+            raise ValueError(
+                "主实验算力数据必须严格包含 28 个完整日、672 个小时。"
+            )
+
+        analysis_energy = energy_scenario.iloc[24:696].reset_index(
+            drop=True
+        )
+        model_input = ordered_hourly.rename(
+            columns={"avg_cpu": "cpu_arrival_pu"}
+        ).copy()
+        for column in energy_scenario.columns:
+            model_input[column] = analysis_energy[column].to_numpy()
+        cpu_arrival = model_input["cpu_arrival_pu"].to_numpy(dtype=float)
+
         model_input.to_csv(
             paths.inputs / "aligned_28d_hourly.csv",
             index=False,

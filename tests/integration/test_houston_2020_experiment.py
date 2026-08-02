@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -252,8 +253,21 @@ class Houston2020ExperimentTests(unittest.TestCase):
                         output_dir=output_dir,
                     )
 
-                load_workload.assert_called_once_with(workload_data)
-                self.assertEqual(load_energy.call_args.args[0], energy_data)
+                load_workload.assert_called_once()
+                loaded_workload_path = Path(
+                    load_workload.call_args.args[0]
+                )
+                loaded_energy_path = Path(load_energy.call_args.args[0])
+                self.assertEqual(
+                    loaded_workload_path.name,
+                    "google_2019_28d_5min.csv",
+                )
+                self.assertEqual(
+                    loaded_energy_path.name,
+                    "houston_2020_may_hourly.csv",
+                )
+                self.assertEqual(loaded_workload_path.parent.name, "inputs")
+                self.assertEqual(loaded_energy_path.parent.name, "inputs")
                 metadata = experiment.metadata
                 self.assertEqual(metadata["input_file"], "workload.csv")
                 self.assertEqual(
@@ -278,6 +292,120 @@ class Houston2020ExperimentTests(unittest.TestCase):
                     self.assertNotIn(absolute_prefix, metadata_path)
             finally:
                 os.chdir(previous_cwd)
+
+    def test_model_and_published_input_use_same_immutable_snapshot(self) -> None:
+        hourly = pd.DataFrame(
+            {
+                "day": np.repeat(np.arange(1, 29), 24),
+                "hour": np.tile(np.arange(24), 28),
+                "avg_cpu": np.full(672, 0.5),
+            }
+        )
+        energy_scenario = pd.DataFrame(
+            {
+                "timestamp_lst": pd.date_range(
+                    "2020-04-30 00:00:00",
+                    periods=699,
+                    freq="h",
+                ),
+                "solar_available_mw": np.zeros(699),
+                "wind_available_mw": np.zeros(699),
+                "tou_period": ["flat"] * 699,
+                "electricity_price_cny_per_kwh": np.full(699, 0.4489),
+            }
+        )
+
+        def fake_solve(
+            **kwargs: object,
+        ) -> tuple[pd.DataFrame, dict, pd.DataFrame]:
+            case_name = str(kwargs["case_name"])
+            return (
+                pd.DataFrame({"case": [case_name]}),
+                {"case": case_name, "operating_cost_cny": 1.0},
+                pd.DataFrame({"case": [case_name]}),
+            )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            parent = Path(temporary_directory)
+            workload_data = parent / "workload.csv"
+            energy_data = parent / "energy.csv"
+            output_dir = parent / "run"
+            workload_before = b"workload before\x00\xff"
+            workload_after = b"workload after\x00\xff"
+            energy_before = b"energy before\x00\xff"
+            workload_data.write_bytes(workload_before)
+            energy_data.write_bytes(energy_before)
+            workload_source = workload_data.resolve(strict=False)
+            loaded_workload_bytes: list[bytes] = []
+            real_copyfile = shutil.copyfile
+
+            def load_workload(path: Path) -> tuple:
+                source_path = Path(path)
+                loaded_workload_bytes.append(source_path.read_bytes())
+                if source_path.resolve(strict=False) == workload_source:
+                    workload_data.write_bytes(workload_after)
+                return pd.DataFrame({"raw": [1]}), hourly, 8, 28
+
+            def copy_then_mutate_source(
+                source: Path,
+                target: Path,
+            ) -> str:
+                copied = real_copyfile(source, target)
+                if Path(source).resolve(strict=False) == workload_source:
+                    workload_data.write_bytes(workload_after)
+                return copied
+
+            with (
+                patch(
+                    "dc_energy_opt.experiments.houston_2020."
+                    "load_and_prepare",
+                    side_effect=load_workload,
+                ),
+                patch(
+                    "dc_energy_opt.experiments.houston_2020."
+                    "load_houston_energy_scenario",
+                    return_value=energy_scenario,
+                ),
+                patch(
+                    "dc_energy_opt.experiments.houston_2020."
+                    "run_rolling_day_ahead",
+                    side_effect=fake_solve,
+                ),
+                patch(
+                    "dc_energy_opt.experiments.houston_2020.shutil.copyfile",
+                    side_effect=copy_then_mutate_source,
+                ),
+                patch(
+                    "dc_energy_opt.experiments.houston_2020.make_plots"
+                ),
+                patch(
+                    "dc_energy_opt.experiments.houston_2020."
+                    "software_versions",
+                    return_value={},
+                ),
+            ):
+                run_houston_2020_experiment(
+                    workload_data=workload_data,
+                    energy_data=energy_data,
+                    output_dir=output_dir,
+                )
+
+            self.assertEqual(loaded_workload_bytes, [workload_before])
+            self.assertEqual(workload_data.read_bytes(), workload_after)
+            published_workload = (
+                output_dir / "inputs" / "google_2019_28d_5min.csv"
+            ).read_bytes()
+            self.assertEqual(
+                published_workload,
+                workload_before,
+                "loaded_before_but_published_after",
+            )
+            self.assertEqual(
+                (
+                    output_dir / "inputs" / "houston_2020_may_hourly.csv"
+                ).read_bytes(),
+                energy_before,
+            )
 
     def test_full_experiment_publishes_exact_tree_and_results(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

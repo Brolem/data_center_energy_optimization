@@ -21,7 +21,11 @@ class RunPaths:
 
 
 def _path_exists(path: Path) -> bool:
-    return path.exists() or path.is_symlink()
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def _validate_generated_path(
@@ -29,18 +33,16 @@ def _validate_generated_path(
     *,
     parent: Path,
     prefix: str,
-) -> Path:
+) -> None:
     resolved_parent = parent.resolve(strict=False)
-    resolved_path = path.resolve(strict=False)
-    if resolved_path.parent != resolved_parent:
+    if path.parent.resolve(strict=False) != resolved_parent:
         raise RuntimeError(
-            f"拒绝清理不在输出同级目录中的路径: {resolved_path}"
+            f"拒绝清理不在输出同级目录中的路径: {path}"
         )
     if not path.name.startswith(prefix):
         raise RuntimeError(
-            f"拒绝清理不带事务前缀 {prefix!r} 的路径: {resolved_path}"
+            f"拒绝清理不带事务前缀 {prefix!r} 的路径: {path}"
         )
-    return resolved_path
 
 
 def _make_writable_and_retry(
@@ -59,23 +61,35 @@ def _remove_generated_path(
     parent: Path,
     prefix: str,
 ) -> None:
-    resolved_path = _validate_generated_path(
+    _validate_generated_path(
         path,
         parent=parent,
         prefix=prefix,
     )
-    if not _path_exists(resolved_path):
+    try:
+        entry_stat = path.lstat()
+    except FileNotFoundError:
         return
-    if resolved_path.is_symlink() or resolved_path.is_file():
+    if stat.S_ISLNK(entry_stat.st_mode):
         try:
-            resolved_path.unlink()
+            path.unlink()
         except PermissionError:
-            resolved_path.chmod(stat.S_IWRITE)
-            resolved_path.unlink()
+            path.chmod(stat.S_IWRITE, follow_symlinks=False)
+            path.unlink()
         return
-    if not resolved_path.is_dir():
-        raise RuntimeError(f"拒绝清理未知文件系统对象: {resolved_path}")
-    shutil.rmtree(resolved_path, onexc=_make_writable_and_retry)
+    if hasattr(path, "is_junction") and path.is_junction():
+        path.rmdir()
+        return
+    if stat.S_ISREG(entry_stat.st_mode):
+        try:
+            path.unlink()
+        except PermissionError:
+            path.chmod(stat.S_IWRITE)
+            path.unlink()
+        return
+    if not stat.S_ISDIR(entry_stat.st_mode):
+        raise RuntimeError(f"拒绝清理未知文件系统对象: {path}")
+    shutil.rmtree(path, onexc=_make_writable_and_retry)
 
 
 @contextmanager
@@ -94,35 +108,34 @@ def staged_run_directory(final_output_dir: Path) -> Iterator[RunPaths]:
             prefix=staging_prefix,
             dir=resolved_parent,
         )
-    ).resolve(strict=False)
-    _validate_generated_path(
-        staging_path,
-        parent=resolved_parent,
-        prefix=staging_prefix,
-    )
-
-    paths = RunPaths(
-        root=staging_path,
-        inputs=staging_path / "inputs",
-        results=staging_path / "results",
-        figures=staging_path / "figures",
-        models=staging_path / "models",
-    )
-    for directory in (
-        paths.inputs,
-        paths.results,
-        paths.figures,
-        paths.models,
-    ):
-        directory.mkdir()
-
-    backup_path = resolved_parent / f"{backup_prefix}{uuid4().hex}"
-    _validate_generated_path(
-        backup_path,
-        parent=resolved_parent,
-        prefix=backup_prefix,
     )
     try:
+        _validate_generated_path(
+            staging_path,
+            parent=resolved_parent,
+            prefix=staging_prefix,
+        )
+        paths = RunPaths(
+            root=staging_path,
+            inputs=staging_path / "inputs",
+            results=staging_path / "results",
+            figures=staging_path / "figures",
+            models=staging_path / "models",
+        )
+        for directory in (
+            paths.inputs,
+            paths.results,
+            paths.figures,
+            paths.models,
+        ):
+            directory.mkdir()
+
+        backup_path = resolved_parent / f"{backup_prefix}{uuid4().hex}"
+        _validate_generated_path(
+            backup_path,
+            parent=resolved_parent,
+            prefix=backup_prefix,
+        )
         yield paths
         if _path_exists(final_path):
             os.replace(final_path, backup_path)

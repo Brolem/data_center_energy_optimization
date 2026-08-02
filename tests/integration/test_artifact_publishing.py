@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+import subprocess
 import tempfile
 import unittest
 from dataclasses import FrozenInstanceError
@@ -31,6 +32,64 @@ class ArtifactPublishingTests(unittest.TestCase):
     def assert_no_transaction_paths(self, parent: Path, name: str) -> None:
         self.assertEqual(list(parent.glob(f".{name}-staging-*")), [])
         self.assertEqual(list(parent.glob(f".{name}-backup-*")), [])
+
+    def assert_subdirectory_initialization_failure_cleans_staging(
+        self,
+        failure_index: int,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            parent = Path(temporary_directory)
+            final_output_dir = parent / "run"
+            final_output_dir.mkdir()
+            (final_output_dir / "old.bin").write_bytes(b"old\x00\xff")
+            before = _tree_hashes(final_output_dir)
+            real_mkdir = Path.mkdir
+            subdirectory_mkdir_count = 0
+
+            def fail_selected_subdirectory(
+                path: Path,
+                mode: int = 0o777,
+                parents: bool = False,
+                exist_ok: bool = False,
+            ) -> None:
+                nonlocal subdirectory_mkdir_count
+                if path.name in {"inputs", "results", "figures", "models"}:
+                    subdirectory_mkdir_count += 1
+                    if subdirectory_mkdir_count == failure_index:
+                        raise OSError(
+                            f"injected subdirectory {failure_index} failure"
+                        )
+                real_mkdir(
+                    path,
+                    mode=mode,
+                    parents=parents,
+                    exist_ok=exist_ok,
+                )
+
+            with (
+                patch.object(Path, "mkdir", new=fail_selected_subdirectory),
+                self.assertRaisesRegex(
+                    OSError,
+                    f"injected subdirectory {failure_index} failure",
+                ),
+            ):
+                with staged_run_directory(final_output_dir):
+                    self.fail("staging yield reached")
+
+            leaked_staging = list(parent.glob(".run-staging-*"))
+            self.assertEqual(
+                len(leaked_staging),
+                0,
+                f"leaked_staging_count={len(leaked_staging)}",
+            )
+            self.assertEqual(list(parent.glob(".run-backup-*")), [])
+            self.assertEqual(_tree_hashes(final_output_dir), before)
+
+    def test_second_subdirectory_failure_cleans_staging(self) -> None:
+        self.assert_subdirectory_initialization_failure_cleans_staging(2)
+
+    def test_third_subdirectory_failure_cleans_staging(self) -> None:
+        self.assert_subdirectory_initialization_failure_cleans_staging(3)
 
     def test_layout_is_precreated_and_paths_are_frozen(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -368,6 +427,92 @@ class ArtifactPublishingTests(unittest.TestCase):
                 (protected_path / "marker.txt").read_text(encoding="utf-8"),
                 "keep",
             )
+
+    def test_generated_symlink_cleanup_preserves_target_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            parent = Path(temporary_directory)
+            protected_path = parent / "protected"
+            protected_path.mkdir()
+            marker_path = protected_path / "marker.bin"
+            marker_bytes = b"protected\x00\xff"
+            marker_path.write_bytes(marker_bytes)
+            link_path = parent / ".run-staging-link"
+            try:
+                link_path.symlink_to(protected_path, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"symlink unavailable: {error}")
+
+            _remove_generated_path(
+                link_path,
+                parent=parent,
+                prefix=".run-staging-",
+            )
+
+            self.assertFalse(os.path.lexists(link_path))
+            self.assertEqual(marker_path.read_bytes(), marker_bytes)
+
+    def test_generated_broken_symlink_cleanup_removes_link_itself(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            parent = Path(temporary_directory)
+            missing_target = parent / "missing"
+            link_path = parent / ".run-staging-broken"
+            try:
+                link_path.symlink_to(
+                    missing_target,
+                    target_is_directory=True,
+                )
+            except OSError as error:
+                self.skipTest(f"symlink unavailable: {error}")
+
+            _remove_generated_path(
+                link_path,
+                parent=parent,
+                prefix=".run-staging-",
+            )
+
+            self.assertFalse(os.path.lexists(link_path))
+
+    @unittest.skipUnless(
+        os.name == "nt" and hasattr(Path, "is_junction"),
+        "requires Windows junction support",
+    )
+    def test_generated_junction_cleanup_preserves_target_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            parent = Path(temporary_directory)
+            protected_path = parent / "protected"
+            protected_path.mkdir()
+            marker_path = protected_path / "marker.bin"
+            marker_bytes = b"protected junction\x00\xff"
+            marker_path.write_bytes(marker_bytes)
+            junction_path = parent / ".run-staging-junction"
+            creation = subprocess.run(
+                [
+                    "cmd",
+                    "/c",
+                    "mklink",
+                    "/J",
+                    str(junction_path),
+                    str(protected_path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if creation.returncode != 0:
+                self.skipTest(
+                    "junction unavailable: "
+                    f"{creation.stdout}{creation.stderr}"
+                )
+            self.assertTrue(junction_path.is_junction())
+
+            _remove_generated_path(
+                junction_path,
+                parent=parent,
+                prefix=".run-staging-",
+            )
+
+            self.assertFalse(os.path.lexists(junction_path))
+            self.assertEqual(marker_path.read_bytes(), marker_bytes)
 
 
 if __name__ == "__main__":
