@@ -15,7 +15,7 @@ import pandas as pd
 from PIL import Image, ImageDraw
 
 import run_first_version
-import dc_energy_opt.reporting as reporting
+import dc_energy_opt.reporting.plots as reporting
 from run_first_version import (
     LEGACY_GENERATED_FILENAMES,
     _archive_source_files,
@@ -26,7 +26,7 @@ from run_first_version import (
     parse_args,
 )
 from dc_energy_opt.config import Parameters
-from dc_energy_opt.reporting import LEGACY_PLOT_FILENAMES, make_plots
+from dc_energy_opt.reporting.plots import LEGACY_PLOT_FILENAMES, make_plots
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -39,18 +39,18 @@ CASE_ORDER = [
     "joint",
 ]
 PLOT_FILES = [
-    "day_ahead_power_results.png",
-    "compute_scheduling_results.png",
-    "battery_operation_results.png",
-    "renewable_dispatch_results.png",
-    "operating_cost_comparison.png",
+    "power_dispatch.png",
+    "compute_schedule.png",
+    "battery_dispatch.png",
+    "renewable_dispatch.png",
+    "cost_breakdown.png",
 ]
 PLOT_SIZES = {
-    "day_ahead_power_results.png": (1800, 1120),
-    "compute_scheduling_results.png": (1800, 820),
-    "battery_operation_results.png": (1800, 1120),
-    "renewable_dispatch_results.png": (1800, 820),
-    "operating_cost_comparison.png": (1800, 1050),
+    "power_dispatch.png": (1800, 1120),
+    "compute_schedule.png": (1800, 820),
+    "battery_dispatch.png": (1800, 1120),
+    "renewable_dispatch.png": (1800, 820),
+    "cost_breakdown.png": (1800, 1050),
 }
 MIN_SERIES_PIXELS = 100
 
@@ -1176,7 +1176,7 @@ class RunnerOutputTests(unittest.TestCase):
                     image.verify()
 
             with Image.open(
-                output_dir / "day_ahead_power_results.png"
+                output_dir / "power_dispatch.png"
             ) as power_plot:
                 joint_color = (220, 38, 38)
                 power_boxes = [
@@ -1198,7 +1198,7 @@ class RunnerOutputTests(unittest.TestCase):
                     )
 
             with Image.open(
-                output_dir / "compute_scheduling_results.png"
+                output_dir / "compute_schedule.png"
             ) as compute_plot:
                 self.assert_plot_has_color(
                     compute_plot,
@@ -1212,7 +1212,7 @@ class RunnerOutputTests(unittest.TestCase):
                 )
 
             with Image.open(
-                output_dir / "battery_operation_results.png"
+                output_dir / "battery_dispatch.png"
             ) as battery_plot:
                 for label, color in [
                     ("battery charge", (37, 99, 235)),
@@ -1223,7 +1223,7 @@ class RunnerOutputTests(unittest.TestCase):
                     self.assert_plot_has_color(battery_plot, color, label)
 
             with Image.open(
-                output_dir / "renewable_dispatch_results.png"
+                output_dir / "renewable_dispatch.png"
             ) as renewable_plot:
                 for label, color in [
                     ("renewable available", (100, 116, 139)),
@@ -1233,7 +1233,7 @@ class RunnerOutputTests(unittest.TestCase):
                     self.assert_plot_has_color(renewable_plot, color, label)
 
             with Image.open(
-                output_dir / "operating_cost_comparison.png"
+                output_dir / "cost_breakdown.png"
             ) as cost_plot:
                 for label, color in [
                     ("grid purchase cost", (79, 70, 229)),

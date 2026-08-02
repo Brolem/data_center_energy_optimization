@@ -23,6 +23,7 @@ from dc_energy_opt.optimization import (
 )
 from dc_energy_opt.reporting import (
     LEGACY_PLOT_FILENAMES,
+    PLOT_FILENAMES,
     make_plots,
     software_versions,
 )
@@ -117,11 +118,7 @@ def _generated_output_names() -> set[str]:
         "case_metrics.csv",
         "run_metadata.json",
         *lp_names,
-        "day_ahead_power_results.png",
-        "compute_scheduling_results.png",
-        "battery_operation_results.png",
-        "renewable_dispatch_results.png",
-        "operating_cost_comparison.png",
+        *PLOT_FILENAMES,
     }
 
 

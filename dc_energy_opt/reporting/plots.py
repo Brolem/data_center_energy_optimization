@@ -35,11 +35,11 @@ CASE_COLORS = {
     "joint": "#DC2626",
 }
 PLOT_FILENAMES = [
-    "day_ahead_power_results.png",
-    "compute_scheduling_results.png",
-    "battery_operation_results.png",
-    "renewable_dispatch_results.png",
-    "operating_cost_comparison.png",
+    "power_dispatch.png",
+    "compute_schedule.png",
+    "battery_dispatch.png",
+    "renewable_dispatch.png",
+    "cost_breakdown.png",
 ]
 LEGACY_PLOT_FILENAMES = [
     "first_version_results.png",
