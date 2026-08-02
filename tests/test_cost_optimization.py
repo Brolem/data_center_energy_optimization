@@ -9,13 +9,13 @@ from tempfile import TemporaryDirectory
 import numpy as np
 import pandas as pd
 
-import scip_first_version.data as energy_data
+import dc_energy_opt.data as energy_data
 from scripts.build_houston_2020_energy_scenario import (
     _load_ge_turbine,
     _sha256_normalized_text,
 )
-from scip_first_version.config import Parameters
-from scip_first_version.model import (
+from dc_energy_opt.config import Parameters
+from dc_energy_opt.model import (
     PendingFlexibleTask,
     _solve_status_is_accepted,
     build_and_solve,

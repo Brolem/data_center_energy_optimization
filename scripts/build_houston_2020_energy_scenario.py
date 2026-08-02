@@ -17,8 +17,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scip_first_version.config import Parameters
-from scip_first_version.data import (
+from dc_energy_opt.config import Parameters
+from dc_energy_opt.data import (
     HOUSTON_ENERGY_SCENARIO_COLUMNS,
     _qinghai_tou,
 )

@@ -1,4 +1,4 @@
-"""Reusable components for the first SCIP compute-power model."""
+"""Data-center energy optimization with rolling deterministic day-ahead scheduling."""
 
 from .config import Parameters
 from .data import (

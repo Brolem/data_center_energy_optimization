@@ -10,10 +10,10 @@ from typing import get_type_hints
 import numpy as np
 import pandas as pd
 
-from scip_first_version.config import Parameters
-from scip_first_version.data import _qinghai_tou
-from scip_first_version.model import PendingFlexibleTask, build_and_solve
-from scip_first_version.rolling import _prewarm_carry_in, run_rolling_day_ahead
+from dc_energy_opt.config import Parameters
+from dc_energy_opt.data import _qinghai_tou
+from dc_energy_opt.model import PendingFlexibleTask, build_and_solve
+from dc_energy_opt.rolling import _prewarm_carry_in, run_rolling_day_ahead
 
 
 class RollingDayAheadTests(unittest.TestCase):

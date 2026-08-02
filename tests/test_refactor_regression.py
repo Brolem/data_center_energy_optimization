@@ -7,21 +7,21 @@ from pathlib import Path
 import numpy as np
 
 import run_first_version
-import scip_first_version
-from scip_first_version.config import Parameters
-from scip_first_version.data import (
+import dc_energy_opt
+from dc_energy_opt.config import Parameters
+from dc_energy_opt.data import (
     build_provisional_energy_scenario,
     load_and_prepare,
     load_energy_scenario,
     load_houston_energy_scenario,
     load_phoenix_weather_source,
 )
-from scip_first_version.model import (
+from dc_energy_opt.model import (
     PendingFlexibleTask,
     WindowSolveState,
     build_and_solve,
 )
-from scip_first_version.rolling import ROLLING_CASES, run_rolling_day_ahead
+from dc_energy_opt.rolling import ROLLING_CASES, run_rolling_day_ahead
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +45,15 @@ class RefactorRegressionTests(unittest.TestCase):
         self.assertEqual(len(self.hourly), 28 * 24)
         self.assertEqual(self.representative_day, 8)
         self.assertEqual(self.stress_day, 28)
+
+    def test_formal_package_exports_current_interfaces(self) -> None:
+        import dc_energy_opt
+
+        self.assertIs(dc_energy_opt.Parameters, Parameters)
+        self.assertTrue(callable(dc_energy_opt.load_and_prepare))
+        self.assertTrue(callable(dc_energy_opt.load_houston_energy_scenario))
+        self.assertTrue(callable(dc_energy_opt.build_and_solve))
+        self.assertTrue(callable(dc_energy_opt.run_rolling_day_ahead))
 
     def test_entrypoints_reexport_public_interfaces(self) -> None:
         runner_exports = {
@@ -73,11 +82,11 @@ class RefactorRegressionTests(unittest.TestCase):
         }
 
         self.assertEqual(set(run_first_version.__all__), set(runner_exports))
-        self.assertEqual(set(scip_first_version.__all__), set(package_exports))
+        self.assertEqual(set(dc_energy_opt.__all__), set(package_exports))
         for name, exported_object in runner_exports.items():
             self.assertIs(getattr(run_first_version, name), exported_object)
         for name, exported_object in package_exports.items():
-            self.assertIs(getattr(scip_first_version, name), exported_object)
+            self.assertIs(getattr(dc_energy_opt, name), exported_object)
 
     def test_default_four_cases_satisfy_rolling_constraints(self) -> None:
         cpu_arrival = self.hourly.sort_values(["day", "hour"])[

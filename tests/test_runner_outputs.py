@@ -15,7 +15,7 @@ import pandas as pd
 from PIL import Image, ImageDraw
 
 import run_first_version
-import scip_first_version.reporting as reporting
+import dc_energy_opt.reporting as reporting
 from run_first_version import (
     LEGACY_GENERATED_FILENAMES,
     _archive_source_files,
@@ -25,8 +25,8 @@ from run_first_version import (
     main,
     parse_args,
 )
-from scip_first_version.config import Parameters
-from scip_first_version.reporting import LEGACY_PLOT_FILENAMES, make_plots
+from dc_energy_opt.config import Parameters
+from dc_energy_opt.reporting import LEGACY_PLOT_FILENAMES, make_plots
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
