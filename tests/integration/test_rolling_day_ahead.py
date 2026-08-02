@@ -11,12 +11,23 @@ import numpy as np
 import pandas as pd
 
 from dc_energy_opt.config import Parameters
-from dc_energy_opt.data import paper_tou_tariff
-from dc_energy_opt.optimization import PendingFlexibleTask, build_and_solve
+from dc_energy_opt.data import (
+    load_and_prepare,
+    load_houston_energy_scenario,
+    paper_tou_tariff,
+)
+from dc_energy_opt.optimization import (
+    PendingFlexibleTask,
+    ROLLING_CASES,
+    build_and_solve,
+)
 from dc_energy_opt.optimization.rolling_day_ahead import (
     _prewarm_carry_in,
     run_rolling_day_ahead,
 )
+
+
+SCENARIO_PATH = Path("data/energy/houston_2020_may_hourly.csv")
 
 
 class RollingDayAheadTests(unittest.TestCase):
@@ -251,6 +262,167 @@ class RollingDayAheadTests(unittest.TestCase):
         self.assertAlmostEqual(
             float(daily.iloc[-1]["window_terminal_stored_energy_mwh"]),
             1.0,
+        )
+
+
+class DefaultHoustonCaseRegressionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        _, cls.hourly, _, _ = load_and_prepare(
+            Path("data/workload/google_2019_28d_5min.csv")
+        )
+
+    def test_default_four_cases_satisfy_rolling_constraints(self) -> None:
+        cpu_arrival = self.hourly.sort_values(["day", "hour"])[
+            "avg_cpu"
+        ].to_numpy(dtype=float)
+        params = Parameters()
+        scenario = load_houston_energy_scenario(
+            SCENARIO_PATH,
+            params,
+        )
+        metrics_by_case = {}
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            for (
+                case_name,
+                enable_shift,
+                enable_storage,
+            ) in ROLLING_CASES:
+                result, metrics, daily = run_rolling_day_ahead(
+                    cpu_arrival=cpu_arrival,
+                    energy_scenario=scenario,
+                    params=params,
+                    case_name=case_name,
+                    enable_shift=enable_shift,
+                    enable_storage=enable_storage,
+                    model_output_dir=output_dir,
+                    show_log=False,
+                )
+                metrics_by_case[case_name] = metrics
+                self.assertEqual(len(result), 675)
+                self.assertEqual(len(daily), 28)
+                self.assertEqual(result["case"].unique().tolist(), [case_name])
+                self.assertGreaterEqual(
+                    float(result["grid_power_mw"].min()),
+                    0.0,
+                )
+                self.assertLessEqual(
+                    float(result["grid_power_mw"].max()),
+                    params.grid_capacity_mw + 1e-8,
+                )
+                self.assertLessEqual(
+                    metrics["cpu_conservation_error"],
+                    1e-9,
+                )
+                self.assertLessEqual(
+                    float(result["cpu_scheduled_pu"].max()),
+                    params.cpu_capacity_pu + 1e-9,
+                )
+                np.testing.assert_allclose(
+                    result["grid_power_mw"]
+                    + result["solar_used_mw"]
+                    + result["wind_used_mw"]
+                    + result["discharge_mw"],
+                    result["dc_power_mw"] + result["charge_mw"],
+                    rtol=0.0,
+                    atol=1e-7,
+                )
+                np.testing.assert_allclose(
+                    result["solar_used_mw"]
+                    + result["solar_curtailed_mw"],
+                    result["solar_available_mw"],
+                    rtol=0.0,
+                    atol=1e-7,
+                )
+                np.testing.assert_allclose(
+                    result["wind_used_mw"]
+                    + result["wind_curtailed_mw"],
+                    result["wind_available_mw"],
+                    rtol=0.0,
+                    atol=1e-7,
+                )
+                self.assertAlmostEqual(
+                    metrics["operating_cost_cny"],
+                    metrics["grid_purchase_cost_cny"]
+                    + metrics["solar_om_cost_cny"]
+                    + metrics["wind_om_cost_cny"]
+                    + metrics["battery_om_cost_cny"]
+                    + metrics["battery_degradation_cost_cny"],
+                    delta=1e-6,
+                )
+                self.assertAlmostEqual(
+                    metrics["operating_cost_cny"],
+                    float(result["hourly_operating_cost_cny"].sum()),
+                    delta=1e-6,
+                )
+                self.assertTrue(np.isfinite(metrics["mip_gap"]))
+                self.assertLessEqual(metrics["maximum_task_delay_h"], 3)
+                if enable_shift:
+                    self.assertGreater(
+                        metrics["warmup_carry_in_task_cpu_pu_hours"],
+                        0.0,
+                    )
+                if enable_storage:
+                    self.assertAlmostEqual(
+                        float(result["soc_start"].iloc[0]),
+                        float(result["soc_end"].iloc[-1]),
+                        delta=1e-8,
+                    )
+                    self.assertLessEqual(
+                        float(
+                            (
+                                result["charge_mw"]
+                                * result["discharge_mw"]
+                            ).max()
+                        ),
+                        1e-8,
+                    )
+                    np.testing.assert_allclose(
+                        result["soc_end"],
+                        result["soc_start"]
+                        + (
+                            params.charge_efficiency
+                            * result["charge_mw"]
+                            - result["discharge_mw"]
+                            / params.discharge_efficiency
+                        )
+                        * params.time_step_h
+                        / params.battery_energy_mwh,
+                        rtol=0.0,
+                        atol=1e-8,
+                    )
+                else:
+                    np.testing.assert_allclose(
+                        result[
+                            [
+                                "charge_mw",
+                                "discharge_mw",
+                                "charge_active",
+                                "discharge_active",
+                            ]
+                        ],
+                        0.0,
+                        rtol=0.0,
+                        atol=1e-12,
+                    )
+                    np.testing.assert_allclose(
+                        result[["soc_start", "soc_end"]],
+                        params.battery_soc_initial,
+                        rtol=0.0,
+                        atol=1e-12,
+                    )
+
+        self.assertLessEqual(
+            metrics_by_case["renewables_storage"]["operating_cost_cny"],
+            metrics_by_case["renewables_only"]["operating_cost_cny"]
+            + 0.010001,
+        )
+        self.assertLessEqual(
+            metrics_by_case["joint"]["operating_cost_cny"],
+            metrics_by_case["renewables_shift"]["operating_cost_cny"]
+            + 0.010001,
         )
 
 
