@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,21 @@ import pandas as pd
 from pyscipopt import Model, quicksum
 
 from .config import Parameters
+
+
+@dataclass(frozen=True)
+class PendingFlexibleTask:
+    origin_hour: int
+    remaining_cpu_pu: float
+
+
+@dataclass(frozen=True)
+class WindowSolveState:
+    stored_energy_mwh: float
+    pending_flexible_tasks: tuple[PendingFlexibleTask, ...]
+
+
+_DEFAULT_TERMINAL_STORED_ENERGY = object()
 
 
 def _solve_status_is_accepted(
@@ -63,7 +79,19 @@ def build_and_solve(
     case_name: str,
     output_dir: Path,
     show_log: bool,
-) -> tuple[pd.DataFrame, dict]:
+    initial_stored_energy_mwh: float | None = None,
+    terminal_stored_energy_mwh: float | None | object = (
+        _DEFAULT_TERMINAL_STORED_ENERGY
+    ),
+    committed_stored_energy_mwh: float | None = None,
+    flex_arrival_hours: int | None = None,
+    carry_in_tasks: tuple[PendingFlexibleTask, ...] = (),
+    commit_hours: int | None = None,
+    return_state: bool = False,
+) -> (
+    tuple[pd.DataFrame, dict]
+    | tuple[pd.DataFrame, dict, WindowSolveState]
+):
     profiles: dict[str, np.ndarray] = {}
     for profile_name, profile_values in (
         ("cpu_arrival", cpu_arrival),
@@ -93,11 +121,77 @@ def build_and_solve(
         if len(profiles[profile_name]) != T:
             raise ValueError(f"{profile_name} 长度必须与 cpu_arrival 一致。")
 
+    if flex_arrival_hours is None:
+        flex_arrival_hours = T
+    if not isinstance(flex_arrival_hours, int):
+        raise TypeError("flex_arrival_hours 必须为整数。")
+    if not 0 <= flex_arrival_hours <= T:
+        raise ValueError("flex_arrival_hours 必须位于 0 与优化时域长度之间。")
+
+    if commit_hours is None:
+        commit_hours = T
+    if not isinstance(commit_hours, int):
+        raise TypeError("commit_hours 必须为整数。")
+    if not 1 <= commit_hours <= T:
+        raise ValueError("commit_hours 必须位于 1 与优化时域长度之间。")
+
+    carry_origins: set[int] = set()
+    for task in carry_in_tasks:
+        if not isinstance(task, PendingFlexibleTask):
+            raise TypeError("carry_in_tasks 只能包含 PendingFlexibleTask。")
+        if task.origin_hour >= 0:
+            raise ValueError("跨日遗留任务的 origin_hour 必须小于 0。")
+        if task.origin_hour in carry_origins:
+            raise ValueError("跨日遗留任务的 origin_hour 不得重复。")
+        if (
+            not math.isfinite(task.remaining_cpu_pu)
+            or task.remaining_cpu_pu <= 0.0
+        ):
+            raise ValueError("跨日遗留任务量必须为有限正数。")
+        if task.origin_hour + params.max_delay_h < 0:
+            raise ValueError("跨日遗留任务已超过最大允许延迟。")
+        carry_origins.add(task.origin_hour)
+    if carry_in_tasks and not enable_shift:
+        raise ValueError("存在跨日遗留任务时必须启用算力转移。")
+
     if enable_storage and (
         not math.isfinite(params.battery_energy_mwh)
         or params.battery_energy_mwh <= 0.0
     ):
         raise ValueError("enable_storage=True 时 battery_energy_mwh 必须大于 0。")
+
+    nominal_initial_energy_mwh = (
+        params.battery_soc_initial * params.battery_energy_mwh
+    )
+    if initial_stored_energy_mwh is None:
+        initial_stored_energy_mwh = nominal_initial_energy_mwh
+    if terminal_stored_energy_mwh is _DEFAULT_TERMINAL_STORED_ENERGY:
+        terminal_stored_energy_mwh = nominal_initial_energy_mwh
+    if enable_storage:
+        storage_min_mwh = params.battery_soc_min * params.battery_energy_mwh
+        storage_max_mwh = params.battery_soc_max * params.battery_energy_mwh
+        if (
+            not math.isfinite(initial_stored_energy_mwh)
+            or not storage_min_mwh
+            <= initial_stored_energy_mwh
+            <= storage_max_mwh
+        ):
+            raise ValueError("initial_stored_energy_mwh 超出储能电量边界。")
+        if terminal_stored_energy_mwh is not None and (
+            not isinstance(terminal_stored_energy_mwh, (int, float))
+            or not math.isfinite(float(terminal_stored_energy_mwh))
+            or not storage_min_mwh
+            <= float(terminal_stored_energy_mwh)
+            <= storage_max_mwh
+        ):
+            raise ValueError("terminal_stored_energy_mwh 超出储能电量边界。")
+        if committed_stored_energy_mwh is not None and (
+            not math.isfinite(committed_stored_energy_mwh)
+            or not storage_min_mwh
+            <= committed_stored_energy_mwh
+            <= storage_max_mwh
+        ):
+            raise ValueError("committed_stored_energy_mwh 超出储能电量边界。")
 
     solar_input = profiles["solar_available_mw"]
     wind_input = profiles["wind_available_mw"]
@@ -128,11 +222,29 @@ def build_and_solve(
         for t in hours
     }
 
-    shifted_cpu = {}
+    shifted_cpu: dict[tuple[int, int], object] = {}
+    flexible_amount_by_origin: dict[int, float] = {}
     if enable_shift:
-        for origin in hours:
+        flexible_amount_by_origin.update(
+            {
+                task.origin_hour: task.remaining_cpu_pu
+                for task in carry_in_tasks
+            }
+        )
+        flexible_amount_by_origin.update(
+            {
+                origin: params.flex_ratio * float(cpu_arrival[origin])
+                for origin in range(flex_arrival_hours)
+            }
+        )
+        for origin, flexible_amount in flexible_amount_by_origin.items():
             last_target = min(origin + params.max_delay_h, T - 1)
-            for target in range(origin, last_target + 1):
+            first_target = max(origin, 0)
+            if first_target > last_target:
+                raise ValueError(
+                    f"origin_hour={origin} 的柔性任务无法在当前窗口内完成。"
+                )
+            for target in range(first_target, last_target + 1):
                 shifted_cpu[origin, target] = model.addVar(
                     lb=0.0,
                     vtype="C",
@@ -141,9 +253,9 @@ def build_and_solve(
             model.addCons(
                 quicksum(
                     shifted_cpu[origin, target]
-                    for target in range(origin, last_target + 1)
+                    for target in range(first_target, last_target + 1)
                 )
-                == params.flex_ratio * float(cpu_arrival[origin]),
+                == flexible_amount,
                 name=f"shift_conservation_{origin:02d}",
             )
 
@@ -265,14 +377,19 @@ def build_and_solve(
         }
         model.addCons(
             stored_energy[0]
-            == params.battery_soc_initial * params.battery_energy_mwh,
+            == initial_stored_energy_mwh,
             name="stored_energy_initial",
         )
-        model.addCons(
-            stored_energy[T]
-            == params.battery_soc_initial * params.battery_energy_mwh,
-            name="stored_energy_terminal",
-        )
+        if terminal_stored_energy_mwh is not None:
+            model.addCons(
+                stored_energy[T] == float(terminal_stored_energy_mwh),
+                name="stored_energy_terminal",
+            )
+        if committed_stored_energy_mwh is not None:
+            model.addCons(
+                stored_energy[commit_hours] == committed_stored_energy_mwh,
+                name="stored_energy_committed_boundary",
+            )
         for t in hours:
             model.addCons(
                 charge_power[t]
@@ -300,13 +417,6 @@ def build_and_solve(
                 / params.discharge_efficiency,
                 name=f"stored_energy_balance_{t:02d}",
             )
-        model.addCons(
-            quicksum(
-                charge_active[t] + discharge_active[t] for t in hours
-            )
-            <= params.battery_max_active_periods,
-            name="storage_active_period_limit",
-        )
     else:
         charge_power = {t: 0.0 for t in hours}
         discharge_power = {t: 0.0 for t in hours}
@@ -354,22 +464,29 @@ def build_and_solve(
         for t in hours
     )
     solar_om_cost = quicksum(
-        params.solar_om_cost_cny_per_kw
+        params.solar_om_cost_cny_per_kwh
         * solar_used[t]
         * params.time_step_h
         * 1000.0
         for t in hours
     )
     wind_om_cost = quicksum(
-        params.wind_om_cost_cny_per_kw
+        params.wind_om_cost_cny_per_kwh
         * wind_used[t]
         * params.time_step_h
         * 1000.0
         for t in hours
     )
     battery_om_cost_expr = quicksum(
-        params.battery_om_cost_cny_per_kw
+        params.battery_om_cost_cny_per_kwh
         * (charge_power[t] + discharge_power[t])
+        * params.time_step_h
+        * 1000.0
+        for t in hours
+    )
+    battery_degradation_cost_expr = quicksum(
+        params.battery_degradation_cost_cny_per_kwh
+        * discharge_power[t]
         * params.time_step_h
         * 1000.0
         for t in hours
@@ -379,6 +496,7 @@ def build_and_solve(
         + solar_om_cost
         + wind_om_cost
         + battery_om_cost_expr
+        + battery_degradation_cost_expr
     )
     model.setObjective(primary_cost_expr, "minimize")
 
@@ -424,15 +542,29 @@ def build_and_solve(
         return float(model.getVal(variable))
 
     if enable_storage:
-        soc_start_values = np.array(
+        stored_energy_start_values = np.array(
             [solution_value(stored_energy[t]) for t in hours],
             dtype=float,
-        ) / params.battery_energy_mwh
-        soc_end_values = np.array(
+        )
+        stored_energy_end_values = np.array(
             [solution_value(stored_energy[t + 1]) for t in hours],
             dtype=float,
-        ) / params.battery_energy_mwh
+        )
+        soc_start_values = np.array(
+            stored_energy_start_values / params.battery_energy_mwh,
+            dtype=float,
+        )
+        soc_end_values = np.array(
+            stored_energy_end_values / params.battery_energy_mwh,
+            dtype=float,
+        )
     else:
+        stored_energy_start_values = np.full(
+            T, nominal_initial_energy_mwh, dtype=float
+        )
+        stored_energy_end_values = np.full(
+            T, nominal_initial_energy_mwh, dtype=float
+        )
         soc_start_values = np.full(
             T, params.battery_soc_initial, dtype=float
         )
@@ -488,6 +620,8 @@ def build_and_solve(
             ),
             "soc_start": soc_start_values,
             "soc_end": soc_end_values,
+            "stored_energy_start_mwh": stored_energy_start_values,
+            "stored_energy_end_mwh": stored_energy_end_values,
             "electricity_price_cny_per_kwh": (
                 electricity_price_cny_per_kwh
             ),
@@ -501,20 +635,26 @@ def build_and_solve(
         * 1000.0
     )
     result["hourly_solar_om_cost_cny"] = (
-        params.solar_om_cost_cny_per_kw
+        params.solar_om_cost_cny_per_kwh
         * result["solar_used_mw"]
         * params.time_step_h
         * 1000.0
     )
     result["hourly_wind_om_cost_cny"] = (
-        params.wind_om_cost_cny_per_kw
+        params.wind_om_cost_cny_per_kwh
         * result["wind_used_mw"]
         * params.time_step_h
         * 1000.0
     )
     result["hourly_battery_om_cost_cny"] = (
-        params.battery_om_cost_cny_per_kw
+        params.battery_om_cost_cny_per_kwh
         * (result["charge_mw"] + result["discharge_mw"])
+        * params.time_step_h
+        * 1000.0
+    )
+    result["hourly_battery_degradation_cost_cny"] = (
+        params.battery_degradation_cost_cny_per_kwh
+        * result["discharge_mw"]
         * params.time_step_h
         * 1000.0
     )
@@ -524,6 +664,7 @@ def build_and_solve(
             "hourly_solar_om_cost_cny",
             "hourly_wind_om_cost_cny",
             "hourly_battery_om_cost_cny",
+            "hourly_battery_degradation_cost_cny",
         ]
     ].sum(axis=1)
 
@@ -535,11 +676,15 @@ def build_and_solve(
     battery_om_cost_value = float(
         result["hourly_battery_om_cost_cny"].sum()
     )
+    battery_degradation_cost_value = float(
+        result["hourly_battery_degradation_cost_cny"].sum()
+    )
     operating_cost_value = (
         grid_purchase_cost_value
         + solar_om_cost_value
         + wind_om_cost_value
         + battery_om_cost_value
+        + battery_degradation_cost_value
     )
     if (
         operating_cost_value
@@ -579,7 +724,59 @@ def build_and_solve(
         else 0.0
     )
     total_task_delay_value = float(model.getVal(total_task_delay_expr))
-    flexible_cpu_total = float(params.flex_ratio * cpu_arrival.sum())
+    assignment_values = [
+        (
+            origin,
+            target,
+            solution_value(variable),
+        )
+        for (origin, target), variable in shifted_cpu.items()
+    ]
+    committed_assignment_values = [
+        (origin, target, value)
+        for origin, target, value in assignment_values
+        if target < commit_hours
+    ]
+    committed_flexible_cpu_total = float(
+        sum(value for _, _, value in committed_assignment_values)
+    )
+    committed_task_delay_value = float(
+        sum(
+            (target - origin) * value
+            for origin, target, value in committed_assignment_values
+        )
+    )
+    committed_maximum_task_delay_h = max(
+        (
+            target - origin
+            for origin, target, value in committed_assignment_values
+            if value > 1e-8
+        ),
+        default=0,
+    )
+    maximum_task_delay_h = max(
+        (
+            target - origin
+            for origin, target, value in assignment_values
+            if value > 1e-8
+        ),
+        default=0,
+    )
+    committed_cross_day_task_cpu = float(
+        sum(
+            value
+            for origin, _, value in committed_assignment_values
+            if origin < 0
+        )
+    )
+    total_cross_day_task_cpu = float(
+        sum(
+            value
+            for origin, target, value in assignment_values
+            if origin < 0 or (origin < commit_hours <= target)
+        )
+    )
+    flexible_cpu_total = float(sum(flexible_amount_by_origin.values()))
     average_flexible_task_delay_h = (
         total_task_delay_value / flexible_cpu_total
         if flexible_cpu_total > 0.0
@@ -587,10 +784,16 @@ def build_and_solve(
     )
     charge_positive = result["charge_mw"] > 1e-8
     discharge_positive = result["discharge_mw"] > 1e-8
+    aggregate_solve_status = (
+        "optimal"
+        if primary_solve_status == "optimal"
+        and secondary_solve_status == "optimal"
+        else "gaplimit"
+    )
 
     metrics = {
         "case": case_name,
-        "status": secondary_solve_status,
+        "status": aggregate_solve_status,
         "shift_enabled": enable_shift,
         "storage_enabled": enable_storage,
         "renewables_enabled": enable_renewables,
@@ -598,6 +801,9 @@ def build_and_solve(
         "solar_om_cost_cny": solar_om_cost_value,
         "wind_om_cost_cny": wind_om_cost_value,
         "battery_om_cost_cny": battery_om_cost_value,
+        "battery_degradation_cost_cny": (
+            battery_degradation_cost_value
+        ),
         "operating_cost_cny": operating_cost_value,
         "grid_purchase_energy_mwh": float(
             result["grid_power_mw"].sum() * params.time_step_h
@@ -613,17 +819,36 @@ def build_and_solve(
         "cpu_conservation_error": float(
             abs(
                 result["cpu_scheduled_pu"].sum()
+                - (
+                    (1.0 - params.flex_ratio)
+                    * result["cpu_arrival_pu"].sum()
+                    + flexible_cpu_total
+                )
+            )
+            if enable_shift
+            else abs(
+                result["cpu_scheduled_pu"].sum()
                 - result["cpu_arrival_pu"].sum()
             )
         ),
-        "solve_time_s": secondary_solve_time_s,
-        "mip_gap": secondary_gap,
+        "solve_time_s": primary_solve_time_s + secondary_solve_time_s,
+        "mip_gap": max(primary_gap, secondary_gap),
         "primary_operating_cost_cny": primary_operating_cost_value,
         "primary_total_task_delay_cpu_hours": (
             primary_total_task_delay_value
         ),
         "total_task_delay_cpu_hours": total_task_delay_value,
         "average_flexible_task_delay_h": average_flexible_task_delay_h,
+        "maximum_task_delay_h": maximum_task_delay_h,
+        "committed_flexible_cpu_pu_hours": committed_flexible_cpu_total,
+        "committed_task_delay_cpu_hours": committed_task_delay_value,
+        "committed_maximum_task_delay_h": (
+            committed_maximum_task_delay_h
+        ),
+        "committed_cross_day_task_cpu_pu_hours": (
+            committed_cross_day_task_cpu
+        ),
+        "total_cross_day_task_cpu_pu_hours": total_cross_day_task_cpu,
         "primary_solve_status": primary_solve_status,
         "secondary_solve_status": secondary_solve_status,
         "primary_solve_time_s": primary_solve_time_s,
@@ -646,4 +871,29 @@ def build_and_solve(
             (result["charge_mw"] * result["discharge_mw"]).max()
         ),
     }
+    if return_state:
+        pending_tasks = tuple(
+            PendingFlexibleTask(
+                origin_hour=origin,
+                remaining_cpu_pu=float(
+                    sum(
+                        solution_value(variable)
+                        for (shift_origin, target), variable in shifted_cpu.items()
+                        if shift_origin == origin and target >= commit_hours
+                    )
+                ),
+            )
+            for origin in sorted(flexible_amount_by_origin)
+            if sum(
+                solution_value(variable)
+                for (shift_origin, target), variable in shifted_cpu.items()
+                if shift_origin == origin and target >= commit_hours
+            )
+            > 1e-8
+        )
+        state = WindowSolveState(
+            stored_energy_mwh=solution_value(stored_energy[commit_hours]),
+            pending_flexible_tasks=pending_tasks,
+        )
+        return result, metrics, state
     return result, metrics

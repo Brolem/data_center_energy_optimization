@@ -12,8 +12,12 @@ from pathlib import Path
 import pandas as pd
 
 from scip_first_version.config import Parameters
-from scip_first_version.data import load_and_prepare, load_energy_scenario
+from scip_first_version.data import (
+    load_and_prepare,
+    load_houston_energy_scenario,
+)
 from scip_first_version.model import build_and_solve
+from scip_first_version.rolling import ROLLING_CASES, run_rolling_day_ahead
 from scip_first_version.reporting import (
     LEGACY_PLOT_FILENAMES,
     make_plots,
@@ -23,10 +27,28 @@ from scip_first_version.reporting import (
 __all__ = [
     "Parameters",
     "load_and_prepare",
-    "load_energy_scenario",
+    "load_houston_energy_scenario",
     "build_and_solve",
+    "run_rolling_day_ahead",
     "make_plots",
     "main",
+]
+
+
+LEGACY_GENERATED_FILENAMES = [
+    *LEGACY_PLOT_FILENAMES,
+    "model_input_typical_day.csv",
+    *(
+        f"{case_name}_{stage}.lp"
+        for case_name in (
+            "grid_only",
+            "renewables_only",
+            "renewables_shift",
+            "renewables_storage",
+            "joint",
+        )
+        for stage in ("primary", "secondary")
+    ),
 ]
 
 
@@ -41,32 +63,18 @@ def parse_args() -> argparse.Namespace:
         help="8064 行 Google 2019 instance usage 聚合 CSV",
     )
     parser.add_argument(
-        "--weather-source",
-        type=Path,
-        default=Path(
-            "data/phoenix_nasa_power_20190501_20190528_hourly.csv"
-        ),
-        help="672 小时 Phoenix NASA POWER 气象源 CSV",
-    )
-    parser.add_argument(
         "--energy-scenario",
         type=Path,
         default=Path(
-            "data/provisional_phoenix_weather_qinghai_tou_scenario.csv"
+            "data/houston_2020_main_experiment_energy_scenario.csv"
         ),
-        help="24 小时临时风光与青海分时电价场景 CSV",
+        help="699 小时 Houston 2020 风光与外生论文分段电价场景 CSV",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("outputs/day_ahead_deterministic"),
         help="结果输出目录",
-    )
-    parser.add_argument(
-        "--day",
-        type=int,
-        default=None,
-        help="指定第 1~28 天；省略则选择代表日",
     )
     parser.add_argument(
         "--show-scip-log",
@@ -81,24 +89,33 @@ def _normalized_path_key(path: Path) -> str:
 
 
 def _generated_output_names() -> set[str]:
-    case_names = [
-        "grid_only",
-        "renewables_only",
-        "renewables_shift",
-        "renewables_storage",
-        "joint",
-    ]
+    case_names = [case_name for case_name, _, _ in ROLLING_CASES]
+    lp_names = {
+        f"{case_name}_day_{day:02d}_{stage}.lp"
+        for case_name in case_names
+        for day in range(1, 29)
+        for stage in ("primary", "secondary")
+    }
+    lp_names.update(
+        f"{case_name}_warmup_{stage}.lp"
+        for case_name, enable_shift, _ in ROLLING_CASES
+        if enable_shift
+        for stage in ("primary", "secondary")
+    )
+    lp_names.update(
+        f"{case_name}_soc_coordination_{stage}.lp"
+        for case_name, _, enable_storage in ROLLING_CASES
+        if enable_storage
+        for stage in ("primary", "secondary")
+    )
     return {
         "all_days_hourly.csv",
-        "model_input_typical_day.csv",
+        "model_input_28_days.csv",
         "hourly_case_results.csv",
+        "daily_case_metrics.csv",
         "case_metrics.csv",
         "run_metadata.json",
-        *(
-            f"{case_name}_{stage}.lp"
-            for case_name in case_names
-            for stage in ("primary", "secondary")
-        ),
+        *lp_names,
         "day_ahead_power_results.png",
         "compute_scheduling_results.png",
         "battery_operation_results.png",
@@ -108,7 +125,7 @@ def _generated_output_names() -> set[str]:
 
 
 def _reserved_output_names() -> set[str]:
-    return _generated_output_names() | set(LEGACY_PLOT_FILENAMES)
+    return _generated_output_names() | set(LEGACY_GENERATED_FILENAMES)
 
 
 def _validate_archive_targets(
@@ -280,41 +297,26 @@ def _publish_staged_outputs(
 def main() -> None:
     args = parse_args()
     csv_path = args.input
-    weather_source_path = args.weather_source
     energy_scenario_path = args.energy_scenario
     final_output_dir = args.output_dir
-    source_paths = [csv_path, weather_source_path, energy_scenario_path]
+    source_paths = [csv_path, energy_scenario_path]
     params = Parameters()
 
     raw, hourly, representative_day, stress_day = load_and_prepare(csv_path)
-    energy_scenario = load_energy_scenario(
+    energy_scenario = load_houston_energy_scenario(
         energy_scenario_path,
         params,
-        weather_source_path=weather_source_path,
     )
-    selected_day = args.day if args.day is not None else representative_day
     max_day = int(hourly["day"].max())
-    if not 1 <= selected_day <= max_day:
-        raise ValueError(f"--day 应在 1 到 {max_day} 之间。")
-
-    selected = (
-        hourly[hourly["day"] == selected_day]
-        .sort_values("hour")
-        .reset_index(drop=True)
-    )
-    if len(selected) != 24:
-        raise ValueError("所选日不是完整的 24 个小时。")
-
-    model_input = selected.rename(
+    ordered_hourly = hourly.sort_values(["day", "hour"]).reset_index(drop=True)
+    if max_day != 28 or len(ordered_hourly) != 672:
+        raise ValueError("主实验算力数据必须严格包含 28 个完整日、672 个小时。")
+    analysis_energy = energy_scenario.iloc[24:696].reset_index(drop=True)
+    model_input = ordered_hourly.rename(
         columns={"avg_cpu": "cpu_arrival_pu"}
-    ).merge(
-        energy_scenario,
-        on="hour",
-        how="inner",
-        validate="one_to_one",
-    )
-    if len(model_input) != 24:
-        raise ValueError("算力轨迹与能源场景未能按 24 个小时完整对齐。")
+    ).copy()
+    for column in energy_scenario.columns:
+        model_input[column] = analysis_energy[column].to_numpy()
     _validate_archive_targets(source_paths, final_output_dir)
     final_output_dir.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(
@@ -323,79 +325,53 @@ def main() -> None:
     ) as staging_name:
         output_dir = Path(staging_name)
         model_input.to_csv(
-            output_dir / "model_input_typical_day.csv",
+            output_dir / "model_input_28_days.csv",
             index=False,
         )
         hourly.to_csv(output_dir / "all_days_hourly.csv", index=False)
 
-        cases = [
-            ("grid_only", False, False, False),
-            ("renewables_only", False, False, True),
-            ("renewables_shift", True, False, True),
-            ("renewables_storage", False, True, True),
-            ("joint", True, True, True),
-        ]
         cpu_arrival = model_input["cpu_arrival_pu"].to_numpy(dtype=float)
-        solar_available_mw = model_input["solar_available_mw"].to_numpy(
-            dtype=float
-        )
-        wind_available_mw = model_input["wind_available_mw"].to_numpy(
-            dtype=float
-        )
-        electricity_price_cny_per_kwh = model_input[
-            "electricity_price_cny_per_kwh"
-        ].to_numpy(dtype=float)
-        tou_by_hour = energy_scenario[["hour", "tou_period"]]
 
         results = []
         metric_rows = []
+        daily_results = []
         for (
             case_name,
             enable_shift,
             enable_storage,
-            enable_renewables,
-        ) in cases:
-            result, metrics = build_and_solve(
+        ) in ROLLING_CASES:
+            result, metrics, daily_metrics = run_rolling_day_ahead(
                 cpu_arrival=cpu_arrival,
-                solar_available_mw=solar_available_mw,
-                wind_available_mw=wind_available_mw,
-                electricity_price_cny_per_kwh=(
-                    electricity_price_cny_per_kwh
-                ),
+                energy_scenario=energy_scenario,
                 params=params,
+                case_name=case_name,
                 enable_shift=enable_shift,
                 enable_storage=enable_storage,
-                enable_renewables=enable_renewables,
-                case_name=case_name,
                 output_dir=output_dir,
                 show_log=args.show_scip_log,
             )
-            result = result.merge(
-                tou_by_hour,
-                on="hour",
-                how="left",
-                validate="many_to_one",
-            )
-            if result["tou_period"].isna().any():
-                raise ValueError(f"{case_name} 小时结果未能完整映射分时时段。")
             results.append(result)
             metric_rows.append(metrics)
+            daily_results.append(daily_metrics)
 
         all_results = pd.concat(results, ignore_index=True)
         metrics = pd.DataFrame(metric_rows)
-        grid_only_cost = float(
+        daily_metrics = pd.concat(daily_results, ignore_index=True)
+        renewables_only_cost = float(
             metrics.loc[
-                metrics["case"] == "grid_only", "operating_cost_cny"
+                metrics["case"] == "renewables_only", "operating_cost_cny"
             ].iloc[0]
         )
-        metrics["operating_cost_savings_vs_grid_only_pct"] = (
-            100.0 * (grid_only_cost - metrics["operating_cost_cny"])
-            / grid_only_cost
-            if grid_only_cost > 0.0
+        metrics["operating_cost_savings_vs_renewables_only_pct"] = (
+            100.0
+            * (renewables_only_cost - metrics["operating_cost_cny"])
+            / renewables_only_cost
+            if renewables_only_cost > 0.0
             else 0.0
         )
 
         all_results.to_csv(output_dir / "hourly_case_results.csv", index=False)
+        daily_metrics.to_csv(output_dir / "daily_case_metrics.csv", index=False)
         metrics.to_csv(output_dir / "case_metrics.csv", index=False)
         make_plots(all_results, metrics, output_dir)
 
@@ -404,44 +380,72 @@ def main() -> None:
             {
                 "server_idle_power_kw": params.server_idle_power_kw,
                 "solar_capacity_mw": params.solar_capacity_mw,
+                "solar_inverter_capacity_mw": (
+                    params.solar_inverter_capacity_mw
+                ),
                 "wind_capacity_mw": params.wind_capacity_mw,
             }
         )
         metadata = {
-            "model_type": "deterministic_day_ahead",
-            "scenario_status": (
-                "provisional_mixed_region_development_scenario"
-            ),
+            "model_type": "rolling_24_plus_3_deterministic_day_ahead",
+            "scenario_status": "houston_2020_main_experiment",
             "input_file": str(csv_path),
             "energy_scenario_file": str(energy_scenario_path),
-            "weather_source": {
-                "file": str(weather_source_path),
-                "location": "Phoenix, Arizona, USA",
-                "latitude": 33.4484,
-                "longitude": -112.0740,
-                "time_standard": "LST",
-                "period": "2019-05-01/2019-05-28",
+            "renewable_data_source": {
+                "file": str(energy_scenario_path),
+                "location": "Houston, Texas, USA",
+                "time_standard": "UTC-06 fixed local standard time",
+                "period": "2020-04-30 00:00/2020-05-29 02:00",
+                "source_repository": (
+                    "https://github.com/dos-group/vessim-opt/tree/"
+                    "724ee837f2867ef7b90658730de2d55823a3ae5c"
+                ),
+                "solar_method": "NSRDB five-minute data with PVWatts v8",
+                "wind_method": (
+                    "WIND Toolkit 80 m five-minute wind speed with "
+                    "GE 1.5sle power curve scaled to 6.6 MW"
+                ),
             },
             "electricity_price_source": {
                 "file": str(energy_scenario_path),
-                "region": "Qinghai, China",
                 "currency": "CNY",
                 "tariff_type": "time_of_use",
+                "geographic_role": "exogenous paper tariff",
                 "source_paper": (
                     "A novel demand response-based distributed multi-energy "
                     "system optimal operation framework for data centers"
                 ),
             },
             "geographic_interpretation": (
-                "当前 24 小时场景混合使用菲尼克斯气象和青海电价，"
-                "只用于模型开发和模块验证。"
+                "风光出力来自 Houston；购电价沿用论文分段电价，"
+                "作为外生价格信号，不主张二者具有地理一致性。"
+            ),
+            "rolling_schedule": {
+                "warmup": "2020-04-30 00:00/2020-04-30 23:00",
+                "analysis": "2020-05-01 00:00/2020-05-28 23:00",
+                "settlement_tail": "2020-05-29 00:00/2020-05-29 02:00",
+                "window_hours": 27,
+                "committed_hours": 24,
+                "maximum_task_delay_hours": params.max_delay_h,
+                "soc_coordination": (
+                    "one full-period deterministic coordination solve; "
+                    "daily boundary targets enforced in rolling windows"
+                ),
+            },
+            "formal_cases": [case_name for case_name, _, _ in ROLLING_CASES],
+            "cost_baseline_case": "renewables_only",
+            "operating_cost_accounting": (
+                "operating_cost_cny equals the 672-hour analysis cost plus "
+                "the 3-hour settlement-tail cost; warmup cost is excluded"
+            ),
+            "battery_equivalent_full_cycle_definition": (
+                "discharged_energy_mwh / battery_energy_mwh"
             ),
             "raw_rows": int(len(raw)),
             "energy_scenario_rows": int(len(energy_scenario)),
             "days": int(max_day),
             "representative_day": representative_day,
             "stress_day": stress_day,
-            "selected_day": selected_day,
             "parameters": parameter_values,
             "software_versions": software_versions(),
         }
@@ -460,7 +464,7 @@ def main() -> None:
         _publish_staged_outputs(
             output_dir,
             final_output_dir,
-            remove_names=set(LEGACY_PLOT_FILENAMES),
+            remove_names=set(LEGACY_GENERATED_FILENAMES),
         )
 
     print(json.dumps(metadata, ensure_ascii=True, indent=2))
@@ -474,10 +478,17 @@ def main() -> None:
                 "solar_om_cost_cny",
                 "wind_om_cost_cny",
                 "battery_om_cost_cny",
+                "battery_degradation_cost_cny",
                 "operating_cost_cny",
-                "operating_cost_savings_vs_grid_only_pct",
+                "operating_cost_savings_vs_renewables_only_pct",
                 "renewable_curtailment_energy_mwh",
                 "renewable_curtailment_rate_pct",
+                "battery_equivalent_full_cycles",
+                "cross_day_task_cpu_pu_hours",
+                "average_flexible_task_delay_h",
+                "maximum_task_delay_h",
+                "grid_binding_hours",
+                "grid_minimum_margin_mw",
                 "solve_time_s",
                 "mip_gap",
             ]

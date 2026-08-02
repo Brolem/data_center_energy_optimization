@@ -12,26 +12,27 @@ class Parameters:
     server_max_power_kw: float = 0.55
     server_idle_power_ratio: float = 0.60
     pue: float = 1.10
-    grid_capacity_mw: float = 7.66
+    grid_capacity_mw: float = 6.60
     solar_panel_area_m2: float = 20_000.0
     solar_base_efficiency: float = 0.15
-    solar_om_cost_cny_per_kw: float = 0.016
+    solar_dc_ac_ratio: float = 1.15
+    solar_om_cost_cny_per_kwh: float = 0.03
     wind_turbine_count: int = 33
     wind_turbine_rated_power_kw: float = 200.0
     wind_cut_in_speed_m_s: float = 3.0
     wind_rated_speed_m_s: float = 11.4
     wind_cut_out_speed_m_s: float = 25.0
-    wind_om_cost_cny_per_kw: float = 0.018
-    battery_energy_mwh: float = 1.0
-    battery_charge_power_mw: float = 0.40
-    battery_discharge_power_mw: float = 0.25
+    wind_om_cost_cny_per_kwh: float = 0.09
+    battery_energy_mwh: float = 2.0
+    battery_charge_power_mw: float = 0.50
+    battery_discharge_power_mw: float = 0.50
     charge_efficiency: float = 0.95
     discharge_efficiency: float = 0.90
     battery_soc_min: float = 0.10
     battery_soc_max: float = 0.90
     battery_soc_initial: float = 0.50
-    battery_om_cost_cny_per_kw: float = 0.18
-    battery_max_active_periods: int = 16
+    battery_om_cost_cny_per_kwh: float = 0.015
+    battery_degradation_cost_cny_per_kwh: float = 0.15
     primary_cost_tolerance_cny: float = 0.01
     time_step_h: float = 1.0
     time_limit_s: float = 60.0
@@ -44,6 +45,10 @@ class Parameters:
     @property
     def solar_capacity_mw(self) -> float:
         return self.solar_panel_area_m2 * self.solar_base_efficiency / 1000.0
+
+    @property
+    def solar_inverter_capacity_mw(self) -> float:
+        return self.solar_capacity_mw / self.solar_dc_ac_ratio
 
     @property
     def wind_capacity_mw(self) -> float:

@@ -2,3 +2,4 @@ pyscipopt==6.2.1
 pandas==3.0.5
 numpy==2.5.1
 pillow==12.3.0
+nrel-pysam==7.1.0

@@ -14,24 +14,21 @@ GRID = "#CBD5E1"
 TEXT = "#0F172A"
 MUTED = "#475569"
 PANEL = "#FFFFFF"
-SCENARIO_SUBTITLE = "Provisional Phoenix Weather + Qinghai TOU"
+SCENARIO_SUBTITLE = "Houston 2020 Renewables + Exogenous Paper TOU"
 
 CASE_ORDER = [
-    "grid_only",
     "renewables_only",
     "renewables_shift",
     "renewables_storage",
     "joint",
 ]
 CASE_LABELS = {
-    "grid_only": "Grid only",
     "renewables_only": "Renewables",
     "renewables_shift": "Renewables + shift",
     "renewables_storage": "Renewables + battery",
     "joint": "Joint",
 }
 CASE_COLORS = {
-    "grid_only": "#64748B",
     "renewables_only": "#059669",
     "renewables_shift": "#2563EB",
     "renewables_storage": "#F59E0B",
@@ -71,6 +68,7 @@ HOURLY_NUMERIC_COLUMNS = [
     "hourly_solar_om_cost_cny",
     "hourly_wind_om_cost_cny",
     "hourly_battery_om_cost_cny",
+    "hourly_battery_degradation_cost_cny",
     "hourly_operating_cost_cny",
 ]
 METRIC_NUMERIC_COLUMNS = [
@@ -78,6 +76,7 @@ METRIC_NUMERIC_COLUMNS = [
     "solar_om_cost_cny",
     "wind_om_cost_cny",
     "battery_om_cost_cny",
+    "battery_degradation_cost_cny",
     "operating_cost_cny",
 ]
 NONNEGATIVE_HOURLY_COLUMNS = [
@@ -99,6 +98,7 @@ NONNEGATIVE_HOURLY_COLUMNS = [
     "hourly_solar_om_cost_cny",
     "hourly_wind_om_cost_cny",
     "hourly_battery_om_cost_cny",
+    "hourly_battery_degradation_cost_cny",
     "hourly_operating_cost_cny",
 ]
 NONNEGATIVE_TOLERANCE = 1e-10
@@ -120,6 +120,7 @@ def software_versions() -> dict[str, str]:
             )
         ),
         "pillow": __import__("PIL").__version__,
+        "nrel_pysam": __import__("PySAM").__version__,
         "pandas": pd.__version__,
         "numpy": np.__version__,
     }
@@ -140,7 +141,7 @@ def _validate_plot_inputs(
     metrics: pd.DataFrame,
 ) -> None:
     required_columns = {
-        "hourly_results": ["case", *HOURLY_NUMERIC_COLUMNS],
+        "hourly_results": ["case", "period_role", *HOURLY_NUMERIC_COLUMNS],
         "metrics": ["case", *METRIC_NUMERIC_COLUMNS],
     }
     dataframes = {
@@ -228,44 +229,62 @@ def _validate_plot_inputs(
                 f"missing={missing_cases}, unexpected={unexpected_cases}"
             )
 
-    expected_hours = set(range(24))
-    grid_only_cpu_arrival = (
+    baseline_rows = (
         hourly_results.loc[
-            hourly_results["case"] == "grid_only"
+            hourly_results["case"] == "renewables_only"
         ]
-        .sort_values("hour")["cpu_arrival_pu"]
-        .to_numpy(dtype=float)
+        .sort_values("hour")
+        .reset_index(drop=True)
+    )
+    if len(baseline_rows) < 3:
+        raise ValueError("hourly_results must contain the settlement tail")
+    expected_hours = set(range(len(baseline_rows)))
+    baseline_cpu_arrival = baseline_rows["cpu_arrival_pu"].to_numpy(
+        dtype=float
+    )
+    expected_roles = np.array(
+        ["analysis"] * (len(baseline_rows) - 3)
+        + ["settlement_tail"] * 3,
+        dtype=object,
     )
     for case_name in CASE_ORDER:
         case_rows = hourly_results.loc[
             hourly_results["case"] == case_name
         ]
-        if len(case_rows) != 24:
+        if len(case_rows) != len(baseline_rows):
             raise ValueError(
-                f"hourly_results case {case_name} must have exactly 24 rows; "
+                f"hourly_results case {case_name} must have exactly "
+                f"{len(baseline_rows)} rows; "
                 f"found {len(case_rows)}"
             )
         hours = case_rows["hour"]
         if not hours.is_unique or set(hours.tolist()) != expected_hours:
             raise ValueError(
                 f"hourly_results case {case_name} hour values must be "
-                "unique 0..23"
+                f"unique 0..{len(baseline_rows) - 1}"
             )
 
-        case_cpu_arrival = (
-            case_rows.sort_values("hour")["cpu_arrival_pu"].to_numpy(
-                dtype=float
-            )
+        sorted_case_rows = case_rows.sort_values("hour")
+        case_cpu_arrival = sorted_case_rows["cpu_arrival_pu"].to_numpy(
+            dtype=float
         )
         if not np.allclose(
             case_cpu_arrival,
-            grid_only_cpu_arrival,
+            baseline_cpu_arrival,
             rtol=0.0,
             atol=1e-10,
         ):
             raise ValueError(
                 f"hourly_results case {case_name} cpu_arrival_pu "
-                "does not match grid_only by hour"
+                "does not match renewables_only by hour"
+            )
+        if not np.array_equal(
+            sorted_case_rows["period_role"].to_numpy(dtype=object),
+            expected_roles,
+        ):
+            raise ValueError(
+                f"hourly_results case {case_name} period_role must mark "
+                "the final three rows as settlement_tail"
             )
 
         metric_row_count = int(metrics["case"].eq(case_name).sum())
@@ -429,8 +448,18 @@ def _draw_series(
     *,
     width: int = 3,
     dashed: bool = False,
+    x_min: float = 0.0,
+    x_max: float = 23.0,
 ) -> None:
-    points = _xy_points(x_values, y_values, plot, y_min, y_max)
+    points = _xy_points(
+        x_values,
+        y_values,
+        plot,
+        y_min,
+        y_max,
+        x_min=x_min,
+        x_max=x_max,
+    )
     if dashed:
         _draw_dashed_line(draw, points, color, width)
     elif len(points) > 1:
@@ -481,6 +510,49 @@ def _case_data(
     )
 
 
+def _hour_axis(data: pd.DataFrame) -> tuple[float, float, tuple[int, ...]]:
+    last_hour = int(data["hour"].max())
+    x_max = float(max(last_hour, 1))
+    ticks = tuple(
+        dict.fromkeys(
+            round(value)
+            for value in np.linspace(0.0, float(last_hour), 5)
+        )
+    )
+    return 0.0, x_max, ticks
+
+
+def _mark_settlement_tail(
+    draw: ImageDraw.ImageDraw,
+    data: pd.DataFrame,
+    plot: tuple[int, int, int, int],
+    x_min: float,
+    x_max: float,
+) -> None:
+    tail_hours = data.loc[
+        data["period_role"] == "settlement_tail", "hour"
+    ].to_numpy(dtype=float)
+    if len(tail_hours) == 0:
+        return
+    boundary_hour = float(np.min(tail_hours)) - 0.5
+    plot_left, plot_top, plot_right, plot_bottom = plot
+    x = round(
+        plot_left
+        + (boundary_hour - x_min)
+        / max(x_max - x_min, 1.0)
+        * (plot_right - plot_left)
+    )
+    draw.line((x, plot_top, x, plot_bottom), fill="#7C3AED", width=2)
+    label = "3 h settlement tail"
+    label_width = draw.textlength(label, font=_font(12))
+    draw.text(
+        (max(plot_left, plot_right - label_width - 4), plot_top + 4),
+        label,
+        font=_font(12),
+        fill="#7C3AED",
+    )
+
+
 def _nonnegative_limit(values: list[np.ndarray]) -> float:
     maxima = [float(np.max(value)) for value in values if value.size]
     return max(max(maxima, default=0.0) * 1.10, 1.0)
@@ -499,7 +571,20 @@ def _draw_case_lines_panel(
         for case_name in CASE_ORDER
     ]
     y_max = _nonnegative_limit(values)
-    plot = _panel_axes(draw, bounds, title, 0.0, y_max, y_label)
+    baseline = _case_data(hourly_results, CASE_ORDER[0])
+    x_min, x_max, x_ticks = _hour_axis(baseline)
+    plot = _panel_axes(
+        draw,
+        bounds,
+        title,
+        0.0,
+        y_max,
+        y_label,
+        x_min=x_min,
+        x_max=x_max,
+        x_ticks=x_ticks,
+    )
+    _mark_settlement_tail(draw, baseline, plot, x_min, x_max)
     for case_name, series in zip(CASE_ORDER, values, strict=True):
         data = _case_data(hourly_results, case_name)
         _draw_series(
@@ -511,6 +596,8 @@ def _draw_case_lines_panel(
             y_max,
             CASE_COLORS[case_name],
             width=4 if case_name == "joint" else 2,
+            x_min=x_min,
+            x_max=x_max,
         )
     left, top, right, _ = bounds
     _draw_legend(
@@ -528,7 +615,7 @@ def _draw_day_ahead_power_results(
 ) -> None:
     image = Image.new("RGB", (1800, 1120), BACKGROUND)
     draw = ImageDraw.Draw(image)
-    _draw_header(draw, "Deterministic Day-Ahead Power Results")
+    _draw_header(draw, "Rolling 24+3 h Day-Ahead Power Results")
     panels = [
         ((35, 105, 885, 595), "Data-center demand", "dc_power_mw"),
         ((915, 105, 1765, 595), "Grid purchase", "grid_power_mw"),
@@ -553,15 +640,15 @@ def _draw_compute_scheduling_results(
 ) -> None:
     image = Image.new("RGB", (1800, 820), BACKGROUND)
     draw = ImageDraw.Draw(image)
-    _draw_header(draw, "Deterministic Day-Ahead Compute Scheduling")
-    grid_only = _case_data(hourly_results, "grid_only")
+    _draw_header(draw, "Rolling 24+3 h Day-Ahead Compute Scheduling")
+    baseline = _case_data(hourly_results, "renewables_only")
     scheduled_values = [
         _case_data(hourly_results, case_name)["cpu_scheduled_pu"].to_numpy(
             dtype=float
         )
         for case_name in CASE_ORDER
     ]
-    arrival = grid_only["cpu_arrival_pu"].to_numpy(dtype=float)
+    arrival = baseline["cpu_arrival_pu"].to_numpy(dtype=float)
     cpu_values = [arrival, *scheduled_values]
     cpu_min = min(float(np.min(values)) for values in cpu_values)
     cpu_max = max(float(np.max(values)) for values in cpu_values)
@@ -576,9 +663,14 @@ def _draw_compute_scheduling_results(
         "CPU arrival",
         y_min,
         y_max,
-        "CPU utilization (p.u.); common to all five cases",
+        "CPU utilization (p.u.); common to all four cases",
+        x_min=_hour_axis(baseline)[0],
+        x_max=_hour_axis(baseline)[1],
+        x_ticks=_hour_axis(baseline)[2],
     )
-    hours = grid_only["hour"].to_numpy(dtype=float)
+    x_min, x_max, _ = _hour_axis(baseline)
+    _mark_settlement_tail(draw, baseline, arrival_plot, x_min, x_max)
+    hours = baseline["hour"].to_numpy(dtype=float)
     _draw_series(
         draw,
         hours,
@@ -588,6 +680,8 @@ def _draw_compute_scheduling_results(
         y_max,
         "#334155",
         width=4,
+        x_min=x_min,
+        x_max=x_max,
     )
     _draw_legend(
         draw,
@@ -605,7 +699,11 @@ def _draw_compute_scheduling_results(
         y_min,
         y_max,
         "CPU utilization (p.u.)",
+        x_min=x_min,
+        x_max=x_max,
+        x_ticks=_hour_axis(baseline)[2],
     )
+    _mark_settlement_tail(draw, baseline, scheduled_plot, x_min, x_max)
     for case_name, values in zip(CASE_ORDER, scheduled_values, strict=True):
         data = _case_data(hourly_results, case_name)
         _draw_series(
@@ -617,6 +715,8 @@ def _draw_compute_scheduling_results(
             y_max,
             CASE_COLORS[case_name],
             width=4 if case_name == "joint" else 2,
+            x_min=x_min,
+            x_max=x_max,
         )
     _draw_legend(
         draw,
@@ -637,6 +737,7 @@ def _draw_battery_power_panel(
     charge = data["charge_mw"].to_numpy(dtype=float)
     discharge = data["discharge_mw"].to_numpy(dtype=float)
     limit = max(float(np.max(charge)), float(np.max(discharge)), 1.0) * 1.10
+    x_min, x_max, x_ticks = _hour_axis(data)
     plot = _panel_axes(
         draw,
         bounds,
@@ -644,9 +745,11 @@ def _draw_battery_power_panel(
         -limit,
         limit,
         "Battery power (MW): charge positive; discharge negative",
-        x_min=-0.5,
-        x_max=23.5,
+        x_min=x_min,
+        x_max=x_max,
+        x_ticks=x_ticks,
     )
+    _mark_settlement_tail(draw, data, plot, x_min, x_max)
     hours = data["hour"].to_numpy(dtype=float)
     zero_y = _xy_points(
         np.array([0.0]),
@@ -654,20 +757,20 @@ def _draw_battery_power_panel(
         plot,
         -limit,
         limit,
-        x_min=-0.5,
-        x_max=23.5,
+        x_min=x_min,
+        x_max=x_max,
     )[0][1]
     plot_left, _, plot_right, _ = plot
-    hour_width = (plot_right - plot_left) / 24.0
-    bar_width = max(round(hour_width * 0.28), 3)
+    hour_width = (plot_right - plot_left) / max(len(data), 1)
+    bar_width = max(round(hour_width * 0.28), 1)
     charge_points = _xy_points(
         hours,
         charge,
         plot,
         -limit,
         limit,
-        x_min=-0.5,
-        x_max=23.5,
+        x_min=x_min,
+        x_max=x_max,
     )
     discharge_points = _xy_points(
         hours,
@@ -675,8 +778,8 @@ def _draw_battery_power_panel(
         plot,
         -limit,
         limit,
-        x_min=-0.5,
-        x_max=23.5,
+        x_min=x_min,
+        x_max=x_max,
     )
     for charge_point, discharge_point in zip(
         charge_points, discharge_points, strict=True
@@ -716,6 +819,7 @@ def _draw_soc_panel(
     bounds: tuple[int, int, int, int],
     title: str,
 ) -> None:
+    x_min, x_max, x_ticks = _hour_axis(data)
     plot = _panel_axes(
         draw,
         bounds,
@@ -723,15 +827,21 @@ def _draw_soc_panel(
         0.0,
         1.0,
         "State of charge (p.u.); operating bounds 0.10-0.90",
+        x_min=x_min,
+        x_max=x_max,
+        x_ticks=x_ticks,
     )
+    _mark_settlement_tail(draw, data, plot, x_min, x_max)
     hours = data["hour"].to_numpy(dtype=float)
     for bound in (0.10, 0.90):
         points = _xy_points(
-            np.array([0.0, 23.0]),
+            np.array([x_min, x_max]),
             np.array([bound, bound]),
             plot,
             0.0,
             1.0,
+            x_min=x_min,
+            x_max=x_max,
         )
         _draw_dashed_line(draw, points, "#94A3B8", width=2)
     _draw_series(
@@ -744,6 +854,8 @@ def _draw_soc_panel(
         "#7C3AED",
         width=3,
         dashed=True,
+        x_min=x_min,
+        x_max=x_max,
     )
     _draw_series(
         draw,
@@ -754,6 +866,8 @@ def _draw_soc_panel(
         1.0,
         "#059669",
         width=3,
+        x_min=x_min,
+        x_max=x_max,
     )
     left, top, right, _ = bounds
     _draw_legend(
@@ -775,7 +889,7 @@ def _draw_battery_operation_results(
 ) -> None:
     image = Image.new("RGB", (1800, 1120), BACKGROUND)
     draw = ImageDraw.Draw(image)
-    _draw_header(draw, "Deterministic Day-Ahead Battery Operation")
+    _draw_header(draw, "Rolling 24+3 h Day-Ahead Battery Operation")
     storage = _case_data(hourly_results, "renewables_storage")
     joint = _case_data(hourly_results, "joint")
     _draw_battery_power_panel(
@@ -819,6 +933,7 @@ def _draw_renewable_panel(
     curtailed = data[curtailed_column].to_numpy(dtype=float)
     y_max = _nonnegative_limit([available, used, curtailed])
     title = f"Joint case: {resource.capitalize()} dispatch"
+    x_min, x_max, x_ticks = _hour_axis(data)
     plot = _panel_axes(
         draw,
         bounds,
@@ -826,7 +941,11 @@ def _draw_renewable_panel(
         0.0,
         y_max,
         "Power (MW)",
+        x_min=x_min,
+        x_max=x_max,
+        x_ticks=x_ticks,
     )
+    _mark_settlement_tail(draw, data, plot, x_min, x_max)
     hours = data["hour"].to_numpy(dtype=float)
     _draw_series(
         draw,
@@ -837,6 +956,8 @@ def _draw_renewable_panel(
         y_max,
         "#64748B",
         width=4,
+        x_min=x_min,
+        x_max=x_max,
     )
     _draw_series(
         draw,
@@ -847,6 +968,8 @@ def _draw_renewable_panel(
         y_max,
         "#059669",
         width=3,
+        x_min=x_min,
+        x_max=x_max,
     )
     _draw_series(
         draw,
@@ -858,6 +981,8 @@ def _draw_renewable_panel(
         "#DC2626",
         width=3,
         dashed=True,
+        x_min=x_min,
+        x_max=x_max,
     )
     left, top, right, _ = bounds
     _draw_legend(
@@ -879,7 +1004,7 @@ def _draw_renewable_dispatch_results(
 ) -> None:
     image = Image.new("RGB", (1800, 820), BACKGROUND)
     draw = ImageDraw.Draw(image)
-    _draw_header(draw, "Deterministic Day-Ahead Renewable Dispatch")
+    _draw_header(draw, "Rolling 24+3 h Day-Ahead Renewable Dispatch")
     joint = _case_data(hourly_results, "joint")
     _draw_renewable_panel(draw, joint, (35, 105, 885, 790), "solar")
     _draw_renewable_panel(draw, joint, (915, 105, 1765, 790), "wind")
@@ -913,14 +1038,22 @@ def _draw_cost_comparison(
         "solar_om_cost_cny",
         "wind_om_cost_cny",
         "battery_om_cost_cny",
+        "battery_degradation_cost_cny",
     ]
     component_labels = [
         "Grid purchase",
         "Solar O&M",
         "Wind O&M",
         "Battery O&M",
+        "Battery degradation",
     ]
-    component_colors = ["#4F46E5", "#F59E0B", "#0284C7", "#EA580C"]
+    component_colors = [
+        "#4F46E5",
+        "#F59E0B",
+        "#0284C7",
+        "#EA580C",
+        "#DB2777",
+    ]
     components = [
         np.array(
             [
@@ -936,7 +1069,7 @@ def _draw_cost_comparison(
 
     image = Image.new("RGB", (1800, 1050), BACKGROUND)
     draw = ImageDraw.Draw(image)
-    _draw_header(draw, "Deterministic Day-Ahead Operating Cost")
+    _draw_header(draw, "Rolling 28-Day Operating Cost")
     plot = (180, 170, 1750, 910)
     plot_left, plot_top, plot_right, plot_bottom = plot
     draw.rectangle(plot, fill=PANEL, outline=MUTED)
@@ -955,7 +1088,7 @@ def _draw_cost_comparison(
         )
     _draw_vertical_text(
         image,
-        "Operating cost (CNY/day)",
+        "Operating cost (CNY; analysis + settlement tail)",
         35,
         (plot_top + plot_bottom) // 2,
     )

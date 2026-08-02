@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw
 import run_first_version
 import scip_first_version.reporting as reporting
 from run_first_version import (
+    LEGACY_GENERATED_FILENAMES,
     _archive_source_files,
     _generated_output_names,
     _publish_staged_outputs,
@@ -30,14 +31,10 @@ from scip_first_version.reporting import LEGACY_PLOT_FILENAMES, make_plots
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INPUT_PATH = Path("data/instance_usage_grouped_300_seconds_month.csv")
-WEATHER_SOURCE_PATH = Path(
-    "data/phoenix_nasa_power_20190501_20190528_hourly.csv"
-)
 SCENARIO_PATH = Path(
-    "data/provisional_phoenix_weather_qinghai_tou_scenario.csv"
+    "data/houston_2020_main_experiment_energy_scenario.csv"
 )
 CASE_ORDER = [
-    "grid_only",
     "renewables_only",
     "renewables_shift",
     "renewables_storage",
@@ -71,11 +68,14 @@ def _flat_file_hashes(directory: Path) -> dict[str, str]:
 def _zero_plot_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:
     hourly_rows = []
     for case_name in CASE_ORDER:
-        for hour in range(24):
+        for hour in range(27):
             hourly_rows.append(
                 {
                     "case": case_name,
                     "hour": hour,
+                    "period_role": (
+                        "analysis" if hour < 24 else "settlement_tail"
+                    ),
                     "cpu_arrival_pu": 0.0,
                     "cpu_scheduled_pu": 0.0,
                     "it_power_mw": 0.0,
@@ -96,6 +96,7 @@ def _zero_plot_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:
                     "hourly_solar_om_cost_cny": 0.0,
                     "hourly_wind_om_cost_cny": 0.0,
                     "hourly_battery_om_cost_cny": 0.0,
+                    "hourly_battery_degradation_cost_cny": 0.0,
                     "hourly_operating_cost_cny": 0.0,
                 }
             )
@@ -106,6 +107,7 @@ def _zero_plot_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:
             "solar_om_cost_cny": 0.0,
             "wind_om_cost_cny": 0.0,
             "battery_om_cost_cny": 0.0,
+            "battery_degradation_cost_cny": 0.0,
             "operating_cost_cny": 0.0,
         }
     )
@@ -142,14 +144,9 @@ class RunnerOutputTests(unittest.TestCase):
             arguments = parse_args()
 
         self.assertIsInstance(arguments.input, Path)
-        self.assertIsInstance(arguments.weather_source, Path)
         self.assertIsInstance(arguments.energy_scenario, Path)
         self.assertIsInstance(arguments.output_dir, Path)
         self.assertEqual(arguments.input, INPUT_PATH)
-        self.assertEqual(
-            arguments.weather_source,
-            WEATHER_SOURCE_PATH,
-        )
         self.assertEqual(
             arguments.energy_scenario,
             SCENARIO_PATH,
@@ -158,7 +155,6 @@ class RunnerOutputTests(unittest.TestCase):
             arguments.output_dir,
             Path("outputs/day_ahead_deterministic"),
         )
-        self.assertIsNone(arguments.day)
         self.assertFalse(arguments.show_scip_log)
 
     def test_source_archive_skips_copy_when_source_is_target(self) -> None:
@@ -183,21 +179,17 @@ class RunnerOutputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             input_dir = root / "input"
-            weather_dir = root / "weather"
+            scenario_dir = root / "scenario"
             input_dir.mkdir()
-            weather_dir.mkdir()
+            scenario_dir.mkdir()
             input_path = input_dir / "shared.csv"
-            weather_path = weather_dir / "shared.csv"
-            scenario_path = root / "scenario.csv"
+            scenario_path = scenario_dir / "shared.csv"
             input_path.write_bytes(INPUT_PATH.read_bytes())
-            weather_path.write_bytes(WEATHER_SOURCE_PATH.read_bytes())
             scenario_path.write_bytes(SCENARIO_PATH.read_bytes())
             arguments = [
                 "run_first_version.py",
                 "--input",
                 str(input_path),
-                "--weather-source",
-                str(weather_path),
                 "--energy-scenario",
                 str(scenario_path),
                 "--output-dir",
@@ -206,7 +198,7 @@ class RunnerOutputTests(unittest.TestCase):
 
             with (
                 patch("sys.argv", arguments),
-                patch("run_first_version.build_and_solve") as solve,
+                patch("run_first_version.run_rolling_day_ahead") as solve,
                 self.assertRaises(ValueError) as context,
             ):
                 main()
@@ -215,7 +207,7 @@ class RunnerOutputTests(unittest.TestCase):
             message = str(context.exception)
             self.assertIn("shared.csv", message)
             self.assertIn(str(input_path.resolve()), message)
-            self.assertIn(str(weather_path.resolve()), message)
+            self.assertIn(str(scenario_path.resolve()), message)
             self.assertFalse((root / "outputs").exists())
 
     @unittest.skipUnless(os.name == "nt", "requires Windows path semantics")
@@ -246,21 +238,33 @@ class RunnerOutputTests(unittest.TestCase):
     def test_reserved_output_names_reject_legal_source_archives(self) -> None:
         expected_generated_names = {
             "all_days_hourly.csv",
-            "model_input_typical_day.csv",
+            "model_input_28_days.csv",
             "hourly_case_results.csv",
+            "daily_case_metrics.csv",
             "case_metrics.csv",
             "run_metadata.json",
             *(
-                f"{case}_{stage}.lp"
+                f"{case}_day_{day:02d}_{stage}.lp"
                 for case in CASE_ORDER
+                for day in range(1, 29)
+                for stage in ("primary", "secondary")
+            ),
+            *(
+                f"{case}_warmup_{stage}.lp"
+                for case in ("renewables_shift", "joint")
+                for stage in ("primary", "secondary")
+            ),
+            *(
+                f"{case}_soc_coordination_{stage}.lp"
+                for case in ("renewables_storage", "joint")
                 for stage in ("primary", "secondary")
             ),
             *PLOT_FILES,
         }
         expected_reserved_names = expected_generated_names | set(
-            LEGACY_PLOT_FILENAMES
+            LEGACY_GENERATED_FILENAMES
         )
-        self.assertEqual(len(expected_reserved_names), 23)
+        self.assertEqual(len(expected_reserved_names), 257)
         self.assertEqual(
             _generated_output_names(),
             expected_generated_names,
@@ -275,10 +279,10 @@ class RunnerOutputTests(unittest.TestCase):
             source_dir = root / "sources"
             output_dir = root / "outputs"
             source_dir.mkdir()
-            valid_google_input = INPUT_PATH.read_bytes()
+            valid_source_content = b"source\n"
             for reserved_name in sorted(expected_reserved_names):
                 source_path = source_dir / reserved_name
-                source_path.write_bytes(valid_google_input)
+                source_path.write_bytes(valid_source_content)
                 with self.subTest(reserved_name=reserved_name):
                     with self.assertRaises(ValueError) as context:
                         _validate_archive_targets(
@@ -312,8 +316,6 @@ class RunnerOutputTests(unittest.TestCase):
                         "run_first_version.py",
                         "--input",
                         str(input_path),
-                        "--weather-source",
-                        str(WEATHER_SOURCE_PATH),
                         "--energy-scenario",
                         str(SCENARIO_PATH),
                         "--output-dir",
@@ -323,7 +325,7 @@ class RunnerOutputTests(unittest.TestCase):
                     with (
                         patch("sys.argv", arguments),
                         patch(
-                            "run_first_version.build_and_solve"
+                            "run_first_version.run_rolling_day_ahead"
                         ) as solve,
                         self.assertRaises(ValueError) as context,
                     ):
@@ -368,8 +370,6 @@ class RunnerOutputTests(unittest.TestCase):
                 "run_first_version.py",
                 "--input",
                 str(input_path),
-                "--weather-source",
-                str(WEATHER_SOURCE_PATH),
                 "--energy-scenario",
                 str(SCENARIO_PATH),
                 "--output-dir",
@@ -378,7 +378,7 @@ class RunnerOutputTests(unittest.TestCase):
 
             with (
                 patch("sys.argv", arguments),
-                patch("run_first_version.build_and_solve") as solve,
+                patch("run_first_version.run_rolling_day_ahead") as solve,
                 self.assertRaises(ValueError) as context,
             ):
                 main()
@@ -407,8 +407,6 @@ class RunnerOutputTests(unittest.TestCase):
                 "run_first_version.py",
                 "--input",
                 str(input_path),
-                "--weather-source",
-                str(WEATHER_SOURCE_PATH),
                 "--energy-scenario",
                 str(SCENARIO_PATH),
                 "--output-dir",
@@ -417,7 +415,7 @@ class RunnerOutputTests(unittest.TestCase):
 
             with (
                 patch("sys.argv", arguments),
-                patch("run_first_version.build_and_solve") as solve,
+                patch("run_first_version.run_rolling_day_ahead") as solve,
                 self.assertRaises(ValueError) as context,
             ):
                 main()
@@ -430,9 +428,14 @@ class RunnerOutputTests(unittest.TestCase):
             self.assertEqual(list(root.glob(".day-ahead-staging-*")), [])
             self.assertEqual(list(root.glob(".day-ahead-backup-*")), [])
 
-    def test_invalid_day_preserves_all_existing_output_files(self) -> None:
+    def test_invalid_energy_scenario_preserves_existing_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
+            invalid_scenario = root / "invalid_scenario.csv"
+            pd.read_csv(SCENARIO_PATH).iloc[:-1].to_csv(
+                invalid_scenario,
+                index=False,
+            )
             output_dir = root / "outputs"
             output_dir.mkdir()
             for filename, content in {
@@ -446,14 +449,10 @@ class RunnerOutputTests(unittest.TestCase):
                 "run_first_version.py",
                 "--input",
                 str(INPUT_PATH),
-                "--weather-source",
-                str(WEATHER_SOURCE_PATH),
                 "--energy-scenario",
-                str(SCENARIO_PATH),
+                str(invalid_scenario),
                 "--output-dir",
                 str(output_dir),
-                "--day",
-                "29",
             ]
 
             with (
@@ -494,7 +493,7 @@ class RunnerOutputTests(unittest.TestCase):
                         "to_csv",
                         side_effect=OSError("injected first CSV failure"),
                     ),
-                    patch("run_first_version.build_and_solve") as solve,
+                    patch("run_first_version.run_rolling_day_ahead") as solve,
                 ):
                     main()
             except OSError as error:
@@ -519,7 +518,7 @@ class RunnerOutputTests(unittest.TestCase):
     def test_second_case_failure_preserves_outputs_and_cleans_staging(
         self,
     ) -> None:
-        real_build_and_solve = run_first_version.build_and_solve
+        real_run_rolling = run_first_version.run_rolling_day_ahead
         call_count = 0
 
         def fail_on_second_case(*args, **kwargs):
@@ -527,7 +526,7 @@ class RunnerOutputTests(unittest.TestCase):
             call_count += 1
             if call_count == 2:
                 raise RuntimeError("injected second-case failure")
-            return real_build_and_solve(*args, **kwargs)
+            return real_run_rolling(*args, **kwargs)
 
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -535,7 +534,7 @@ class RunnerOutputTests(unittest.TestCase):
             output_dir.mkdir()
             for filename, content in {
                 "case_metrics.csv": b"old metrics\n",
-                "grid_only_primary.lp": b"old primary LP\n",
+                "renewables_only_day_01_primary.lp": b"old primary LP\n",
                 "unknown-sentinel.bin": b"unknown sentinel\x00\xff",
             }.items():
                 (output_dir / filename).write_bytes(content)
@@ -553,7 +552,7 @@ class RunnerOutputTests(unittest.TestCase):
             with (
                 patch("sys.argv", arguments),
                 patch(
-                    "run_first_version.build_and_solve",
+                    "run_first_version.run_rolling_day_ahead",
                     side_effect=fail_on_second_case,
                 ),
                 patch("sys.stdout", new_callable=io.StringIO) as stdout,
@@ -677,6 +676,9 @@ class RunnerOutputTests(unittest.TestCase):
                 (output_dir / filename).write_bytes(
                     f"legacy plot {index}\n".encode("ascii")
                 )
+            for filename in LEGACY_GENERATED_FILENAMES:
+                if filename not in LEGACY_PLOT_FILENAMES:
+                    (output_dir / filename).write_bytes(b"legacy output\n")
             (output_dir / "unknown.bin").write_bytes(b"unknown\x00\xff")
             before = _flat_file_hashes(output_dir)
 
@@ -702,7 +704,7 @@ class RunnerOutputTests(unittest.TestCase):
                 _publish_staged_outputs(
                     staging_dir,
                     output_dir,
-                    remove_names=set(LEGACY_PLOT_FILENAMES),
+                    remove_names=set(LEGACY_GENERATED_FILENAMES),
                 )
 
             self.assertEqual(_flat_file_hashes(output_dir), before)
@@ -894,6 +896,9 @@ class RunnerOutputTests(unittest.TestCase):
                 (output_dir / filename).write_bytes(
                     f"legacy plot {index}\n".encode("ascii")
                 )
+            for filename in LEGACY_GENERATED_FILENAMES:
+                if filename not in LEGACY_PLOT_FILENAMES:
+                    (output_dir / filename).write_bytes(b"legacy output\n")
             before = _flat_file_hashes(output_dir)
             arguments = [
                 "run_first_version.py",
@@ -932,6 +937,9 @@ class RunnerOutputTests(unittest.TestCase):
                 (output_dir / filename).write_bytes(
                     f"legacy plot {index}\n".encode("ascii")
                 )
+            for filename in LEGACY_GENERATED_FILENAMES:
+                if filename not in LEGACY_PLOT_FILENAMES:
+                    (output_dir / filename).write_bytes(b"legacy output\n")
             arguments = [
                 "run_first_version.py",
                 "--output-dir",
@@ -945,12 +953,13 @@ class RunnerOutputTests(unittest.TestCase):
 
             self.assertTrue(stdout.getvalue().isascii())
             self.assertEqual(unknown_path.read_bytes(), unknown_content)
-            for filename in LEGACY_PLOT_FILENAMES:
+            for filename in LEGACY_GENERATED_FILENAMES:
                 self.assertFalse((output_dir / filename).exists())
             model_input = pd.read_csv(
-                output_dir / "model_input_typical_day.csv"
+                output_dir / "model_input_28_days.csv"
             )
             hourly = pd.read_csv(output_dir / "hourly_case_results.csv")
+            daily = pd.read_csv(output_dir / "daily_case_metrics.csv")
             metrics = pd.read_csv(output_dir / "case_metrics.csv")
             with (output_dir / "run_metadata.json").open(
                 encoding="utf-8"
@@ -958,22 +967,22 @@ class RunnerOutputTests(unittest.TestCase):
                 metadata = json.load(file)
 
             self.assertEqual(metrics["case"].tolist(), CASE_ORDER)
-            self.assertEqual(len(model_input), 24)
-            self.assertEqual(len(hourly), 5 * 24)
+            self.assertEqual(len(model_input), 672)
+            self.assertEqual(len(hourly), 4 * 675)
+            self.assertEqual(len(daily), 4 * 28)
             self.assertEqual(
                 hourly.groupby("case", sort=False).size().index.tolist(),
                 CASE_ORDER,
             )
             self.assertEqual(
                 hourly.groupby("case", sort=False).size().tolist(),
-                [24] * 5,
+                [675] * 4,
             )
             self.assertTrue(
                 {
                     "cpu_arrival_pu",
                     "hour",
-                    "solar_irradiance_wh_m2",
-                    "wind_speed_50m_m_s",
+                    "timestamp_lst",
                     "solar_available_mw",
                     "wind_available_mw",
                     "tou_period",
@@ -999,14 +1008,21 @@ class RunnerOutputTests(unittest.TestCase):
                     "discharge_mw",
                     "soc_start",
                     "soc_end",
+                    "stored_energy_start_mwh",
+                    "stored_energy_end_mwh",
                     "charge_active",
                     "discharge_active",
+                    "period_role",
+                    "timestamp_lst",
+                    "day",
+                    "hour_of_day",
                     "tou_period",
                     "electricity_price_cny_per_kwh",
                     "hourly_grid_purchase_cost_cny",
                     "hourly_solar_om_cost_cny",
                     "hourly_wind_om_cost_cny",
                     "hourly_battery_om_cost_cny",
+                    "hourly_battery_degradation_cost_cny",
                     "hourly_operating_cost_cny",
                 }.issubset(hourly.columns)
             )
@@ -1017,8 +1033,9 @@ class RunnerOutputTests(unittest.TestCase):
                     "solar_om_cost_cny",
                     "wind_om_cost_cny",
                     "battery_om_cost_cny",
+                    "battery_degradation_cost_cny",
                     "operating_cost_cny",
-                    "operating_cost_savings_vs_grid_only_pct",
+                    "operating_cost_savings_vs_renewables_only_pct",
                     "grid_purchase_energy_mwh",
                     "grid_peak_power_mw",
                     "renewable_available_energy_mwh",
@@ -1027,49 +1044,48 @@ class RunnerOutputTests(unittest.TestCase):
                     "renewable_curtailment_rate_pct",
                     "battery_charged_energy_mwh",
                     "battery_discharged_energy_mwh",
-                    "battery_active_periods",
+                    "battery_throughput_energy_mwh",
+                    "battery_equivalent_full_cycles",
+                    "cross_day_task_cpu_pu_hours",
                     "total_task_delay_cpu_hours",
                     "average_flexible_task_delay_h",
+                    "maximum_task_delay_h",
                     "cpu_conservation_error",
                     "soc_cycle_error",
                     "max_simultaneous_charge_discharge_mw2",
-                    "primary_solve_status",
-                    "secondary_solve_status",
+                    "grid_binding_hours",
+                    "grid_minimum_margin_mw",
                 }.issubset(metrics.columns)
             )
             self.assertAlmostEqual(
                 float(
                     metrics.loc[
-                        metrics["case"] == "grid_only",
-                        "operating_cost_savings_vs_grid_only_pct",
+                        metrics["case"] == "renewables_only",
+                        "operating_cost_savings_vs_renewables_only_pct",
                     ].iloc[0]
                 ),
                 0.0,
             )
 
-            self.assertEqual(metadata["model_type"], "deterministic_day_ahead")
             self.assertEqual(
-                metadata["scenario_status"],
-                "provisional_mixed_region_development_scenario",
+                metadata["model_type"],
+                "rolling_24_plus_3_deterministic_day_ahead",
             )
             self.assertEqual(
-                metadata["weather_source"],
-                {
-                    "file": str(WEATHER_SOURCE_PATH),
-                    "location": "Phoenix, Arizona, USA",
-                    "latitude": 33.4484,
-                    "longitude": -112.0740,
-                    "time_standard": "LST",
-                    "period": "2019-05-01/2019-05-28",
-                },
+                metadata["scenario_status"],
+                "houston_2020_main_experiment",
+            )
+            self.assertEqual(
+                metadata["renewable_data_source"]["location"],
+                "Houston, Texas, USA",
             )
             self.assertEqual(
                 metadata["electricity_price_source"],
                 {
                     "file": str(SCENARIO_PATH),
-                    "region": "Qinghai, China",
                     "currency": "CNY",
                     "tariff_type": "time_of_use",
+                    "geographic_role": "exogenous paper tariff",
                     "source_paper": (
                         "A novel demand response-based distributed "
                         "multi-energy system optimal operation framework "
@@ -1079,12 +1095,13 @@ class RunnerOutputTests(unittest.TestCase):
             )
             self.assertEqual(
                 metadata["geographic_interpretation"],
-                "当前 24 小时场景混合使用菲尼克斯气象和青海电价，"
-                "只用于模型开发和模块验证。",
+                "风光出力来自 Houston；购电价沿用论文分段电价，"
+                "作为外生价格信号，不主张二者具有地理一致性。",
             )
             self.assertEqual(metadata["representative_day"], 8)
             self.assertEqual(metadata["stress_day"], 28)
-            self.assertEqual(metadata["selected_day"], 8)
+            self.assertEqual(metadata["formal_cases"], CASE_ORDER)
+            self.assertEqual(metadata["cost_baseline_case"], "renewables_only")
             parameter_values = metadata["parameters"]
             parameters = Parameters()
             self.assertEqual(
@@ -1094,6 +1111,10 @@ class RunnerOutputTests(unittest.TestCase):
             self.assertEqual(
                 parameter_values["solar_capacity_mw"],
                 parameters.solar_capacity_mw,
+            )
+            self.assertEqual(
+                parameter_values["solar_inverter_capacity_mw"],
+                parameters.solar_inverter_capacity_mw,
             )
             self.assertEqual(
                 parameter_values["wind_capacity_mw"],
@@ -1107,6 +1128,7 @@ class RunnerOutputTests(unittest.TestCase):
                     "pyscipopt",
                     "scip",
                     "pillow",
+                    "nrel_pysam",
                     "pandas",
                     "numpy",
                 }.issubset(software)
@@ -1115,25 +1137,24 @@ class RunnerOutputTests(unittest.TestCase):
             self.assertEqual(software["numpy"], np.__version__)
 
             required_files = [
-                "model_input_typical_day.csv",
+                "model_input_28_days.csv",
                 "all_days_hourly.csv",
                 "hourly_case_results.csv",
+                "daily_case_metrics.csv",
                 "case_metrics.csv",
                 "run_metadata.json",
                 INPUT_PATH.name,
-                WEATHER_SOURCE_PATH.name,
                 SCENARIO_PATH.name,
+                "renewables_only_day_01_primary.lp",
+                "renewables_only_day_28_secondary.lp",
+                "renewables_shift_warmup_primary.lp",
+                "renewables_storage_soc_coordination_secondary.lp",
+                "joint_day_28_secondary.lp",
             ]
-            required_files.extend(
-                f"{case}_{stage}.lp"
-                for case in CASE_ORDER
-                for stage in ("primary", "secondary")
-            )
             for filename in required_files:
                 self.assertTrue((output_dir / filename).is_file(), filename)
             for source_path in (
                 INPUT_PATH,
-                WEATHER_SOURCE_PATH,
                 SCENARIO_PATH,
             ):
                 self.assertEqual(
@@ -1142,6 +1163,7 @@ class RunnerOutputTests(unittest.TestCase):
                         (output_dir / source_path.name).read_bytes()
                     ).digest(),
                 )
+            self.assertEqual(len(list(output_dir.glob("*.lp"))), 232)
 
             self.assertEqual(
                 sorted(path.name for path in output_dir.glob("*.png")),
@@ -1201,22 +1223,6 @@ class RunnerOutputTests(unittest.TestCase):
                     ("SOC end", (5, 150, 105)),
                 ]:
                     self.assert_plot_has_color(battery_plot, color, label)
-                battery_pixels = battery_plot.load()
-                power_colors = {(37, 99, 235), (234, 88, 12)}
-                edge_regions = [
-                    (112, 121, 207, 545),
-                    (862, 871, 207, 545),
-                    (992, 1001, 207, 545),
-                    (1742, 1751, 207, 545),
-                ]
-                for left, right, top, bottom in edge_regions:
-                    self.assertFalse(
-                        any(
-                            battery_pixels[x, y] in power_colors
-                            for x in range(left, right)
-                            for y in range(top, bottom)
-                        )
-                    )
 
             with Image.open(
                 output_dir / "renewable_dispatch_results.png"
@@ -1236,6 +1242,7 @@ class RunnerOutputTests(unittest.TestCase):
                     ("solar O&M cost", (245, 158, 11)),
                     ("wind O&M cost", (2, 132, 199)),
                     ("battery O&M cost", (234, 88, 12)),
+                    ("battery degradation cost", (219, 39, 119)),
                 ]:
                     self.assert_plot_has_color(cost_plot, color, label)
 
@@ -1406,6 +1413,7 @@ class RunnerOutputTests(unittest.TestCase):
             "solar_om_cost_cny",
             "wind_om_cost_cny",
             "battery_om_cost_cny",
+            "battery_degradation_cost_cny",
         ]
         metrics.loc[:, component_columns] = -1e-10
         metrics.loc[:, "operating_cost_cny"] = 0.0

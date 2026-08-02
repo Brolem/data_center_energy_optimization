@@ -13,19 +13,20 @@ from scip_first_version.data import (
     build_provisional_energy_scenario,
     load_and_prepare,
     load_energy_scenario,
+    load_houston_energy_scenario,
     load_phoenix_weather_source,
 )
-from scip_first_version.model import build_and_solve
+from scip_first_version.model import (
+    PendingFlexibleTask,
+    WindowSolveState,
+    build_and_solve,
+)
+from scip_first_version.rolling import ROLLING_CASES, run_rolling_day_ahead
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-WEATHER_SOURCE_PATH = (
-    PROJECT_ROOT / "data" / "phoenix_nasa_power_20190501_20190528_hourly.csv"
-)
 SCENARIO_PATH = (
-    PROJECT_ROOT
-    / "data"
-    / "provisional_phoenix_weather_qinghai_tou_scenario.csv"
+    PROJECT_ROOT / "data" / "houston_2020_main_experiment_energy_scenario.csv"
 )
 
 
@@ -49,8 +50,9 @@ class RefactorRegressionTests(unittest.TestCase):
         runner_exports = {
             "Parameters": Parameters,
             "load_and_prepare": load_and_prepare,
-            "load_energy_scenario": load_energy_scenario,
+            "load_houston_energy_scenario": load_houston_energy_scenario,
             "build_and_solve": build_and_solve,
+            "run_rolling_day_ahead": run_rolling_day_ahead,
             "make_plots": run_first_version.make_plots,
             "main": run_first_version.main,
         }
@@ -61,8 +63,13 @@ class RefactorRegressionTests(unittest.TestCase):
             ),
             "load_phoenix_weather_source": load_phoenix_weather_source,
             "load_energy_scenario": load_energy_scenario,
+            "load_houston_energy_scenario": load_houston_energy_scenario,
             "load_and_prepare": load_and_prepare,
             "build_and_solve": build_and_solve,
+            "PendingFlexibleTask": PendingFlexibleTask,
+            "WindowSolveState": WindowSolveState,
+            "ROLLING_CASES": ROLLING_CASES,
+            "run_rolling_day_ahead": run_rolling_day_ahead,
         }
 
         self.assertEqual(set(run_first_version.__all__), set(runner_exports))
@@ -72,24 +79,15 @@ class RefactorRegressionTests(unittest.TestCase):
         for name, exported_object in package_exports.items():
             self.assertIs(getattr(scip_first_version, name), exported_object)
 
-    def test_default_five_cases_satisfy_core_constraints(self) -> None:
-        selected = self.hourly[
-            self.hourly["day"] == self.representative_day
-        ].sort_values("hour")
-        cpu_arrival = selected["avg_cpu"].to_numpy(dtype=float)
+    def test_default_four_cases_satisfy_rolling_constraints(self) -> None:
+        cpu_arrival = self.hourly.sort_values(["day", "hour"])[
+            "avg_cpu"
+        ].to_numpy(dtype=float)
         params = Parameters()
-        scenario = load_energy_scenario(
+        scenario = load_houston_energy_scenario(
             SCENARIO_PATH,
             params,
-            weather_source_path=WEATHER_SOURCE_PATH,
         )
-        case_settings = [
-            ("grid_only", False, False, False),
-            ("renewables_only", False, False, True),
-            ("renewables_shift", True, False, True),
-            ("renewables_storage", False, True, True),
-            ("joint", True, True, True),
-        ]
         metrics_by_case = {}
 
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -98,32 +96,28 @@ class RefactorRegressionTests(unittest.TestCase):
                 case_name,
                 enable_shift,
                 enable_storage,
-                enable_renewables,
-            ) in case_settings:
-                result, metrics = build_and_solve(
+            ) in ROLLING_CASES:
+                result, metrics, daily = run_rolling_day_ahead(
                     cpu_arrival=cpu_arrival,
-                    solar_available_mw=scenario[
-                        "solar_available_mw"
-                    ].to_numpy(dtype=float),
-                    wind_available_mw=scenario[
-                        "wind_available_mw"
-                    ].to_numpy(dtype=float),
-                    electricity_price_cny_per_kwh=scenario[
-                        "electricity_price_cny_per_kwh"
-                    ].to_numpy(dtype=float),
+                    energy_scenario=scenario,
                     params=params,
+                    case_name=case_name,
                     enable_shift=enable_shift,
                     enable_storage=enable_storage,
-                    enable_renewables=enable_renewables,
-                    case_name=case_name,
                     output_dir=output_dir,
                     show_log=False,
                 )
                 metrics_by_case[case_name] = metrics
-                self.assertEqual(len(result), 24)
+                self.assertEqual(len(result), 675)
+                self.assertEqual(len(daily), 28)
+                self.assertEqual(result["case"].unique().tolist(), [case_name])
                 self.assertGreaterEqual(
                     float(result["grid_power_mw"].min()),
                     0.0,
+                )
+                self.assertLessEqual(
+                    float(result["grid_power_mw"].max()),
+                    params.grid_capacity_mw + 1e-8,
                 )
                 self.assertLessEqual(
                     metrics["cpu_conservation_error"],
@@ -161,7 +155,8 @@ class RefactorRegressionTests(unittest.TestCase):
                     metrics["grid_purchase_cost_cny"]
                     + metrics["solar_om_cost_cny"]
                     + metrics["wind_om_cost_cny"]
-                    + metrics["battery_om_cost_cny"],
+                    + metrics["battery_om_cost_cny"]
+                    + metrics["battery_degradation_cost_cny"],
                     delta=1e-6,
                 )
                 self.assertAlmostEqual(
@@ -170,6 +165,12 @@ class RefactorRegressionTests(unittest.TestCase):
                     delta=1e-6,
                 )
                 self.assertTrue(np.isfinite(metrics["mip_gap"]))
+                self.assertLessEqual(metrics["maximum_task_delay_h"], 3)
+                if enable_shift:
+                    self.assertGreater(
+                        metrics["warmup_carry_in_task_cpu_pu_hours"],
+                        0.0,
+                    )
                 if enable_storage:
                     self.assertAlmostEqual(
                         float(result["soc_start"].iloc[0]),
@@ -184,15 +185,6 @@ class RefactorRegressionTests(unittest.TestCase):
                             ).max()
                         ),
                         1e-8,
-                    )
-                    self.assertLessEqual(
-                        float(
-                            (
-                                result["charge_active"]
-                                + result["discharge_active"]
-                            ).sum()
-                        ),
-                        params.battery_max_active_periods + 1e-8,
                     )
                     np.testing.assert_allclose(
                         result["soc_end"],
