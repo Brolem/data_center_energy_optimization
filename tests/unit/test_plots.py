@@ -93,6 +93,35 @@ def _daily_plot_inputs(day_number: int) -> pd.DataFrame:
 
 
 class PlotTests(unittest.TestCase):
+    def test_battery_power_uses_hour_interval_centers(self) -> None:
+        data = pd.DataFrame(
+            {
+                "hour": [0, 1, 2],
+                "charge_mw": [0.5, 0.0, 0.0],
+                "discharge_mw": [0.0, 0.0, 0.5],
+            }
+        )
+
+        hours, charge, discharge = plots._battery_power_series(data)
+
+        np.testing.assert_array_equal(hours, np.array([0.5, 1.5, 2.5]))
+        np.testing.assert_array_equal(charge, np.array([0.5, 0.0, 0.0]))
+        np.testing.assert_array_equal(discharge, np.array([0.0, 0.0, -0.5]))
+
+    def test_soc_uses_one_continuous_hour_boundary_series(self) -> None:
+        data = pd.DataFrame(
+            {
+                "hour": [0, 1, 2],
+                "soc_start": [0.10, 0.3375, 0.3375],
+                "soc_end": [0.3375, 0.3375, 0.10],
+            }
+        )
+
+        hours, soc = plots._soc_boundary_series(data)
+
+        np.testing.assert_array_equal(hours, np.array([0.0, 1.0, 2.0, 3.0]))
+        np.testing.assert_array_equal(soc, np.array([0.10, 0.3375, 0.3375, 0.10]))
+
     def test_make_daily_plots_writes_five_images_for_day_01_and_28(
         self,
     ) -> None:

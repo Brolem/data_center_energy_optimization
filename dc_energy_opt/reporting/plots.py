@@ -528,19 +528,41 @@ def _hour_axis(data: pd.DataFrame) -> tuple[float, float, tuple[int, ...]]:
     return 0.0, x_max, ticks
 
 
+def _hour_interval_axis(
+    data: pd.DataFrame,
+) -> tuple[float, float, tuple[int, ...]]:
+    first_hour = int(data["hour"].min())
+    final_boundary = int(data["hour"].max()) + 1
+    ticks = tuple(
+        dict.fromkeys(
+            round(value)
+            for value in np.linspace(
+                float(first_hour),
+                float(final_boundary),
+                5,
+            )
+        )
+    )
+    return float(first_hour), float(final_boundary), ticks
+
+
 def _mark_settlement_tail(
     draw: ImageDraw.ImageDraw,
     data: pd.DataFrame,
     plot: tuple[int, int, int, int],
     x_min: float,
     x_max: float,
+    *,
+    interval_aligned: bool = False,
 ) -> None:
     tail_hours = data.loc[
         data["period_role"] == "settlement_tail", "hour"
     ].to_numpy(dtype=float)
     if len(tail_hours) == 0:
         return
-    boundary_hour = float(np.min(tail_hours)) - 0.5
+    boundary_hour = float(np.min(tail_hours))
+    if not interval_aligned:
+        boundary_hour -= 0.5
     plot_left, plot_top, plot_right, plot_bottom = plot
     tail_left = round(
         plot_left
@@ -560,6 +582,29 @@ def _mark_settlement_tail(
         font=_font(12),
         fill=MUTED,
     )
+
+
+def _battery_power_series(
+    data: pd.DataFrame,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    interval_centers = data["hour"].to_numpy(dtype=float) + 0.5
+    charge = data["charge_mw"].to_numpy(dtype=float)
+    discharge = -data["discharge_mw"].to_numpy(dtype=float)
+    return interval_centers, charge, discharge
+
+
+def _soc_boundary_series(
+    data: pd.DataFrame,
+) -> tuple[np.ndarray, np.ndarray]:
+    hours = data["hour"].to_numpy(dtype=float)
+    boundary_hours = np.concatenate((hours, np.array([hours[-1] + 1.0])))
+    soc = np.concatenate(
+        (
+            np.array([float(data["soc_start"].iloc[0])]),
+            data["soc_end"].to_numpy(dtype=float),
+        )
+    )
+    return boundary_hours, soc
 
 
 def _nonnegative_limit(values: list[np.ndarray]) -> float:
@@ -745,10 +790,9 @@ def _draw_battery_power_panel(
     bounds: tuple[int, int, int, int],
     title: str,
 ) -> None:
-    charge = data["charge_mw"].to_numpy(dtype=float)
-    discharge = data["discharge_mw"].to_numpy(dtype=float)
-    limit = max(float(np.max(charge)), float(np.max(discharge)), 1.0) * 1.10
-    x_min, x_max, x_ticks = _hour_axis(data)
+    hours, charge, discharge = _battery_power_series(data)
+    limit = max(float(np.max(charge)), float(np.max(-discharge)), 1.0) * 1.10
+    x_min, x_max, x_ticks = _hour_interval_axis(data)
     plot = _panel_axes(
         draw,
         bounds,
@@ -760,8 +804,14 @@ def _draw_battery_power_panel(
         x_max=x_max,
         x_ticks=x_ticks,
     )
-    _mark_settlement_tail(draw, data, plot, x_min, x_max)
-    hours = data["hour"].to_numpy(dtype=float)
+    _mark_settlement_tail(
+        draw,
+        data,
+        plot,
+        x_min,
+        x_max,
+        interval_aligned=True,
+    )
     zero_y = _xy_points(
         np.array([0.0]),
         np.array([0.0]),
@@ -773,7 +823,7 @@ def _draw_battery_power_panel(
     )[0][1]
     plot_left, _, plot_right, _ = plot
     hour_width = (plot_right - plot_left) / max(len(data), 1)
-    bar_width = max(round(hour_width * 0.28), 1)
+    bar_half_width = max(round(hour_width * 0.14), 1)
     charge_points = _xy_points(
         hours,
         charge,
@@ -785,7 +835,7 @@ def _draw_battery_power_panel(
     )
     discharge_points = _xy_points(
         hours,
-        -discharge,
+        discharge,
         plot,
         -limit,
         limit,
@@ -797,18 +847,18 @@ def _draw_battery_power_panel(
     ):
         draw.rectangle(
             (
-                charge_point[0] - bar_width,
+                charge_point[0] - bar_half_width,
                 min(charge_point[1], zero_y),
-                charge_point[0],
+                charge_point[0] + bar_half_width,
                 max(charge_point[1], zero_y),
             ),
             fill="#2563EB",
         )
         draw.rectangle(
             (
-                discharge_point[0],
+                discharge_point[0] - bar_half_width,
                 min(discharge_point[1], zero_y),
-                discharge_point[0] + bar_width,
+                discharge_point[0] + bar_half_width,
                 max(discharge_point[1], zero_y),
             ),
             fill="#EA580C",
@@ -830,20 +880,27 @@ def _draw_soc_panel(
     bounds: tuple[int, int, int, int],
     title: str,
 ) -> None:
-    x_min, x_max, x_ticks = _hour_axis(data)
+    x_min, x_max, x_ticks = _hour_interval_axis(data)
     plot = _panel_axes(
         draw,
         bounds,
         title,
         0.0,
         1.0,
-        "State of charge (p.u.); operating bounds 0.10-0.90",
+        "State of charge at hour boundaries (p.u.); bounds 0.10-0.90",
         x_min=x_min,
         x_max=x_max,
         x_ticks=x_ticks,
     )
-    _mark_settlement_tail(draw, data, plot, x_min, x_max)
-    hours = data["hour"].to_numpy(dtype=float)
+    _mark_settlement_tail(
+        draw,
+        data,
+        plot,
+        x_min,
+        x_max,
+        interval_aligned=True,
+    )
+    hours, soc = _soc_boundary_series(data)
     for bound in (0.10, 0.90):
         points = _xy_points(
             np.array([x_min, x_max]),
@@ -858,20 +915,7 @@ def _draw_soc_panel(
     _draw_series(
         draw,
         hours,
-        data["soc_start"].to_numpy(dtype=float),
-        plot,
-        0.0,
-        1.0,
-        "#7C3AED",
-        width=3,
-        dashed=True,
-        x_min=x_min,
-        x_max=x_max,
-    )
-    _draw_series(
-        draw,
-        hours,
-        data["soc_end"].to_numpy(dtype=float),
+        soc,
         plot,
         0.0,
         1.0,
@@ -886,8 +930,7 @@ def _draw_soc_panel(
         left + 90,
         top + 69,
         [
-            ("SOC start", "#7C3AED"),
-            ("SOC end", "#059669"),
+            ("SOC", "#059669"),
             ("Bounds 0.10 / 0.90", "#94A3B8"),
         ],
         max_x=right - 18,
@@ -920,13 +963,13 @@ def _draw_battery_operation_results(
         draw,
         storage,
         (35, 620, 885, 1090),
-        "Renewables + battery: SOC start / end",
+        "Renewables + battery: SOC trajectory",
     )
     _draw_soc_panel(
         draw,
         joint,
         (915, 620, 1765, 1090),
-        "Joint: SOC start / end",
+        "Joint: SOC trajectory",
     )
     image.save(output_path)
 
