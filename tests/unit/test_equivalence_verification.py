@@ -97,6 +97,27 @@ class EquivalenceVerificationTests(unittest.TestCase):
             check=False,
         )
 
+    def _run_tables(
+        self,
+        reference_tables: dict[str, pd.DataFrame],
+        actual_tables: dict[str, pd.DataFrame],
+    ) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            reference_dir = root / "reference"
+            actual_dir = root / "actual"
+            _write_result_set(
+                reference_dir,
+                layout="legacy",
+                tables=reference_tables,
+            )
+            _write_result_set(
+                actual_dir,
+                layout="current",
+                tables=actual_tables,
+            )
+            return self._run(reference_dir, actual_dir)
+
     def test_legacy_and_current_results_allow_tolerance_and_new_timings(
         self,
     ) -> None:
@@ -253,6 +274,102 @@ class EquivalenceVerificationTests(unittest.TestCase):
 
                     self.assertNotEqual(completed.returncode, 0)
                     self.assertIn("计时字段必须有限且非负", completed.stderr)
+
+    def test_two_sided_nan_in_non_timing_numeric_column_is_rejected(
+        self,
+    ) -> None:
+        reference_tables = _tables()
+        actual_tables = {name: frame.copy() for name, frame in _tables().items()}
+        reference_tables["daily"].loc[0, "operating_cost_cny"] = float("nan")
+        actual_tables["daily"].loc[0, "operating_cost_cny"] = float("nan")
+
+        completed = self._run_tables(reference_tables, actual_tables)
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "daily.operating_cost_cny: reference非计时数值字段必须全部有限",
+            completed.stderr,
+        )
+
+    def test_two_sided_infinity_in_non_timing_numeric_column_is_rejected(
+        self,
+    ) -> None:
+        reference_tables = _tables()
+        actual_tables = {name: frame.copy() for name, frame in _tables().items()}
+        reference_tables["daily"].loc[0, "operating_cost_cny"] = float("inf")
+        actual_tables["daily"].loc[0, "operating_cost_cny"] = float("inf")
+
+        completed = self._run_tables(reference_tables, actual_tables)
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "daily.operating_cost_cny: reference非计时数值字段必须全部有限",
+            completed.stderr,
+        )
+
+    def test_one_sided_nonfinite_numeric_value_names_the_invalid_side(
+        self,
+    ) -> None:
+        for invalid_side, invalid_value in (
+            ("reference", float("nan")),
+            ("actual", float("inf")),
+        ):
+            with self.subTest(invalid_side=invalid_side):
+                reference_tables = _tables()
+                actual_tables = {
+                    name: frame.copy() for name, frame in _tables().items()
+                }
+                target_tables = (
+                    reference_tables
+                    if invalid_side == "reference"
+                    else actual_tables
+                )
+                target_tables["daily"].loc[
+                    0, "operating_cost_cny"
+                ] = invalid_value
+
+                completed = self._run_tables(reference_tables, actual_tables)
+
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertIn(
+                    "daily.operating_cost_cny: "
+                    f"{invalid_side}非计时数值字段必须全部有限",
+                    completed.stderr,
+                )
+
+    def test_two_sided_missing_text_value_is_rejected(self) -> None:
+        reference_tables = _tables()
+        actual_tables = {name: frame.copy() for name, frame in _tables().items()}
+        reference_tables["case"].loc[0, "status"] = pd.NA
+        actual_tables["case"].loc[0, "status"] = pd.NA
+
+        completed = self._run_tables(reference_tables, actual_tables)
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "case.status: reference文本或布尔字段不得缺失",
+            completed.stderr,
+        )
+
+    def test_two_sided_missing_boolean_value_is_rejected(self) -> None:
+        reference_tables = _tables()
+        actual_tables = {name: frame.copy() for name, frame in _tables().items()}
+        reference_tables["case"]["storage_enabled"] = reference_tables[
+            "case"
+        ]["storage_enabled"].astype(object)
+        actual_tables["case"]["storage_enabled"] = actual_tables["case"][
+            "storage_enabled"
+        ].astype(object)
+        reference_tables["case"].loc[0, "storage_enabled"] = pd.NA
+        actual_tables["case"].loc[0, "storage_enabled"] = pd.NA
+
+        completed = self._run_tables(reference_tables, actual_tables)
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "case.storage_enabled: reference文本或布尔字段不得缺失",
+            completed.stderr,
+        )
 
 
 if __name__ == "__main__":

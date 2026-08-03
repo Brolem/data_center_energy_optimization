@@ -18,7 +18,7 @@ conda run -n scip_env python -m unittest discover -s tests -t . -v
 conda run -n scip_env python -m unittest discover -s archive/legacy_phoenix/tests -t . -v
 conda run -n scip_env python -m compileall -q dc_energy_opt scripts run_day_ahead_experiment.py run_first_version.py
 conda run -n scip_env python -m pip check
-git diff --check HEAD
+git diff --check dda43b3f79f2a221cb5b5d9d3e07187a74255c2e..HEAD
 ```
 
 ## 主实验复现
@@ -36,8 +36,8 @@ conda run -n scip_env python run_day_ahead_experiment.py `
 
 使用 `scripts/verify_reorganization_equivalence.py` 比较冻结基线与新结构的 `hourly_dispatch.csv`、`daily_metrics.csv` 和 `case_metrics.csv`：
 
-- 字符串列和列顺序必须完全一致；
-- 除计时字段外的数值列使用绝对容差 `1e-9`；
+- 字符串列和列顺序必须完全一致，文本与布尔字段不得缺失；
+- 除计时字段外的数值列必须全部有限，并使用绝对容差 `1e-9`；
 - 计时字段只验证有限且非负；
 - 正式入口和兼容入口生成的三张核心结果表必须满足相同规则。
 

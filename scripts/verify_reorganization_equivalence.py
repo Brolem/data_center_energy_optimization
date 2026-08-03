@@ -108,26 +108,43 @@ def _compare_table(
         ):
             reference_array = reference_values.to_numpy(dtype=float)
             actual_array = actual_values.to_numpy(dtype=float)
+            for side, values in (
+                ("reference", reference_array),
+                ("actual", actual_array),
+            ):
+                if not np.isfinite(values).all():
+                    raise EquivalenceError(
+                        f"{table_name}.{column_name}: "
+                        f"{side}非计时数值字段必须全部有限"
+                    )
             if not np.allclose(
                 reference_array,
                 actual_array,
                 rtol=0.0,
                 atol=atol,
-                equal_nan=True,
+                equal_nan=False,
             ):
-                finite_differences = np.abs(reference_array - actual_array)
-                observed = float(np.nanmax(finite_differences))
+                absolute_differences = np.abs(reference_array - actual_array)
+                observed = float(np.max(absolute_differences))
                 raise EquivalenceError(
                     f"{table_name}.{column_name}: 数值差超过绝对容差 {atol}，"
                     f"最大绝对差={observed}"
                 )
-            finite_differences = np.abs(reference_array - actual_array)
-            if finite_differences.size:
-                column_max = float(np.nanmax(finite_differences))
-                if np.isfinite(column_max):
-                    max_abs_diff = max(max_abs_diff, column_max)
+            absolute_differences = np.abs(reference_array - actual_array)
+            if absolute_differences.size:
+                column_max = float(np.max(absolute_differences))
+                max_abs_diff = max(max_abs_diff, column_max)
             continue
 
+        for side, values in (
+            ("reference", reference_values),
+            ("actual", actual_values),
+        ):
+            if values.isna().any():
+                raise EquivalenceError(
+                    f"{table_name}.{column_name}: "
+                    f"{side}文本或布尔字段不得缺失"
+                )
         if reference_values.dtype != actual_values.dtype or not reference_values.equals(
             actual_values
         ):
