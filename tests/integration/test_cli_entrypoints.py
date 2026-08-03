@@ -23,7 +23,21 @@ class CliEntrypointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             hourly_path = root / "hourly_dispatch.csv"
-            hourly_path.write_text("case,day\njoint,28\n", encoding="utf-8")
+            pd.DataFrame(
+                {
+                    "case": [
+                        "renewables_only",
+                        "renewables_shift",
+                        "renewables_storage",
+                        "joint",
+                    ],
+                    "day": [28, 28, 28, 28],
+                    "period_role": ["analysis"] * 4,
+                    "dc_power_mw": [2.0, 2.0, 2.0, 2.0],
+                    "electricity_price_cny_per_kwh": [0.5] * 4,
+                    "hourly_operating_cost_cny": [800.0, 700.0, 600.0, 500.0],
+                }
+            ).to_csv(hourly_path, index=False)
             output_dir = root / "figures"
             daily_output = output_dir / "day_28"
             with (
@@ -47,12 +61,22 @@ class CliEntrypointTests(unittest.TestCase):
             hourly_results, day_number, actual_output = (
                 make_daily.call_args.args
             )
-            self.assertEqual(hourly_results.to_dict("records"), [
-                {"case": "joint", "day": 28}
-            ])
+            self.assertEqual(len(hourly_results), 4)
             self.assertEqual(day_number, 28)
             self.assertEqual(actual_output, output_dir)
-            self.assertIn(str(daily_output), stdout.getvalue())
+            printed = stdout.getvalue()
+            self.assertIn(
+                "Grid-only accounting baseline: 1000.0000 CNY",
+                printed,
+            )
+            self.assertIn("Required grid peak: 2.0000 MW", printed)
+            self.assertIn(
+                "Wind + solar contribution: 200.0000 CNY (20.0000%)",
+                printed,
+            )
+            self.assertIn("renewables_only", printed)
+            self.assertIn("joint", printed)
+            self.assertNotIn(str(daily_output), printed)
 
     @staticmethod
     def _experiment() -> ExperimentResult:

@@ -45,7 +45,7 @@ conda run -n scip_env python plot_day_ahead_day.py `
   --output-dir outputs/houston_2020_main/figures
 ```
 
-结果写入 `figures/day_XX/`。第 1～27 天绘制 24 小时；第 28 天绘制 24 小时分析期和 3 小时浅灰背景标识的结算尾段。
+结果写入 `figures/day_XX/`。第 1～27 天绘制 24 小时；第 28 天绘制 24 小时分析期和 3 小时浅灰背景标识的结算尾段。终端首先打印纯电网核算成本、纯电网所需峰值和风光成本贡献，随后打印四个正式算例的成本摘要；不打印图片目录。
 
 ## 测试
 
