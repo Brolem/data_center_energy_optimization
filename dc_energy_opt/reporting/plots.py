@@ -8,6 +8,8 @@ import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
 from pyscipopt import Model
 
+from .metrics import summarize_costs
+
 
 BACKGROUND = "#F8FAFC"
 GRID = "#CBD5E1"
@@ -134,6 +136,8 @@ def _normalized_nonnegative_cost(value: float) -> float:
 def _validate_plot_inputs(
     hourly_results: pd.DataFrame,
     metrics: pd.DataFrame,
+    *,
+    expected_period_roles: tuple[str, ...] | None = None,
 ) -> None:
     required_columns = {
         "hourly_results": ["case", "period_role", *HOURLY_NUMERIC_COLUMNS],
@@ -237,11 +241,18 @@ def _validate_plot_inputs(
     baseline_cpu_arrival = baseline_rows["cpu_arrival_pu"].to_numpy(
         dtype=float
     )
-    expected_roles = np.array(
-        ["analysis"] * (len(baseline_rows) - 3)
-        + ["settlement_tail"] * 3,
-        dtype=object,
-    )
+    if expected_period_roles is None:
+        expected_roles = np.array(
+            ["analysis"] * (len(baseline_rows) - 3)
+            + ["settlement_tail"] * 3,
+            dtype=object,
+        )
+    else:
+        expected_roles = np.array(expected_period_roles, dtype=object)
+        if len(expected_roles) != len(baseline_rows):
+            raise ValueError(
+                "expected_period_roles length must match hourly rows"
+            )
     for case_name in CASE_ORDER:
         case_rows = hourly_results.loc[
             hourly_results["case"] == case_name
@@ -531,20 +542,23 @@ def _mark_settlement_tail(
         return
     boundary_hour = float(np.min(tail_hours)) - 0.5
     plot_left, plot_top, plot_right, plot_bottom = plot
-    x = round(
+    tail_left = round(
         plot_left
         + (boundary_hour - x_min)
         / max(x_max - x_min, 1.0)
         * (plot_right - plot_left)
     )
-    draw.line((x, plot_top, x, plot_bottom), fill="#7C3AED", width=2)
+    draw.rectangle(
+        (tail_left, plot_top, plot_right, plot_bottom),
+        fill="#E2E8F0",
+    )
     label = "3 h settlement tail"
     label_width = draw.textlength(label, font=_font(12))
     draw.text(
-        (max(plot_left, plot_right - label_width - 4), plot_top + 4),
+        (max(plot_left + 4, plot_right - label_width - 4), plot_top + 4),
         label,
         font=_font(12),
-        fill="#7C3AED",
+        fill=MUTED,
     )
 
 
@@ -607,10 +621,11 @@ def _draw_case_lines_panel(
 def _draw_day_ahead_power_results(
     hourly_results: pd.DataFrame,
     output_path: Path,
+    header_title: str = "Rolling 24+3 h Day-Ahead Power Results",
 ) -> None:
     image = Image.new("RGB", (1800, 1120), BACKGROUND)
     draw = ImageDraw.Draw(image)
-    _draw_header(draw, "Rolling 24+3 h Day-Ahead Power Results")
+    _draw_header(draw, header_title)
     panels = [
         ((35, 105, 885, 595), "Data-center demand", "dc_power_mw"),
         ((915, 105, 1765, 595), "Grid purchase", "grid_power_mw"),
@@ -632,10 +647,11 @@ def _draw_day_ahead_power_results(
 def _draw_compute_scheduling_results(
     hourly_results: pd.DataFrame,
     output_path: Path,
+    header_title: str = "Rolling 24+3 h Day-Ahead Compute Scheduling",
 ) -> None:
     image = Image.new("RGB", (1800, 820), BACKGROUND)
     draw = ImageDraw.Draw(image)
-    _draw_header(draw, "Rolling 24+3 h Day-Ahead Compute Scheduling")
+    _draw_header(draw, header_title)
     baseline = _case_data(hourly_results, "renewables_only")
     scheduled_values = [
         _case_data(hourly_results, case_name)["cpu_scheduled_pu"].to_numpy(
@@ -881,10 +897,11 @@ def _draw_soc_panel(
 def _draw_battery_operation_results(
     hourly_results: pd.DataFrame,
     output_path: Path,
+    header_title: str = "Rolling 24+3 h Day-Ahead Battery Operation",
 ) -> None:
     image = Image.new("RGB", (1800, 1120), BACKGROUND)
     draw = ImageDraw.Draw(image)
-    _draw_header(draw, "Rolling 24+3 h Day-Ahead Battery Operation")
+    _draw_header(draw, header_title)
     storage = _case_data(hourly_results, "renewables_storage")
     joint = _case_data(hourly_results, "joint")
     _draw_battery_power_panel(
@@ -996,10 +1013,11 @@ def _draw_renewable_panel(
 def _draw_renewable_dispatch_results(
     hourly_results: pd.DataFrame,
     output_path: Path,
+    header_title: str = "Rolling 24+3 h Day-Ahead Renewable Dispatch",
 ) -> None:
     image = Image.new("RGB", (1800, 820), BACKGROUND)
     draw = ImageDraw.Draw(image)
-    _draw_header(draw, "Rolling 24+3 h Day-Ahead Renewable Dispatch")
+    _draw_header(draw, header_title)
     joint = _case_data(hourly_results, "joint")
     _draw_renewable_panel(draw, joint, (35, 105, 885, 790), "solar")
     _draw_renewable_panel(draw, joint, (915, 105, 1765, 790), "wind")
@@ -1026,6 +1044,10 @@ def _draw_vertical_text(
 def _draw_cost_comparison(
     metrics: pd.DataFrame,
     output_path: Path,
+    header_title: str = "Rolling 28-Day Operating Cost",
+    cost_axis_label: str = (
+        "Operating cost (CNY; analysis + settlement tail)"
+    ),
 ) -> None:
     ordered = metrics.set_index("case").loc[CASE_ORDER]
     component_columns = [
@@ -1064,7 +1086,7 @@ def _draw_cost_comparison(
 
     image = Image.new("RGB", (1800, 1050), BACKGROUND)
     draw = ImageDraw.Draw(image)
-    _draw_header(draw, "Rolling 28-Day Operating Cost")
+    _draw_header(draw, header_title)
     plot = (180, 170, 1750, 910)
     plot_left, plot_top, plot_right, plot_bottom = plot
     draw.rectangle(plot, fill=PANEL, outline=MUTED)
@@ -1083,7 +1105,7 @@ def _draw_cost_comparison(
         )
     _draw_vertical_text(
         image,
-        "Operating cost (CNY; analysis + settlement tail)",
+        cost_axis_label,
         35,
         (plot_top + plot_bottom) // 2,
     )
@@ -1141,6 +1163,141 @@ def _draw_cost_comparison(
             fill=MUTED,
         )
     image.save(output_path)
+
+
+def _prepare_daily_plot_inputs(
+    hourly_results: pd.DataFrame,
+    day_number: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if isinstance(day_number, bool) or not isinstance(day_number, int):
+        raise TypeError("day_number 必须为整数。")
+    if not 1 <= day_number <= 28:
+        raise ValueError("day_number 必须位于 1..28。")
+    required_columns = [
+        "case",
+        "day",
+        "period_role",
+        *HOURLY_NUMERIC_COLUMNS,
+    ]
+    missing_columns = [
+        column
+        for column in required_columns
+        if column not in hourly_results.columns
+    ]
+    if missing_columns:
+        raise ValueError(
+            "hourly_results missing required columns: "
+            f"{', '.join(missing_columns)}"
+        )
+    if not pd.api.types.is_numeric_dtype(hourly_results["day"]):
+        raise ValueError("hourly_results numeric column day must be numeric")
+    day_values = hourly_results["day"].to_numpy(dtype=float)
+    if (
+        not np.isfinite(day_values).all()
+        or not np.equal(day_values, np.round(day_values)).all()
+    ):
+        raise ValueError("hourly_results day values must be finite integers")
+
+    selected = hourly_results.loc[
+        hourly_results["day"] == day_number
+    ].copy()
+    actual_cases = selected["case"].drop_duplicates().tolist()
+    if set(actual_cases) != set(CASE_ORDER):
+        raise ValueError(
+            "hourly_results case set invalid for selected day: "
+            f"found={actual_cases}"
+        )
+
+    expected_hours = 27 if day_number == 28 else 24
+    expected_roles = (
+        ("analysis",) * 24 + ("settlement_tail",) * 3
+        if day_number == 28
+        else ("analysis",) * 24
+    )
+    daily_cases = []
+    for case_name in CASE_ORDER:
+        case_rows = (
+            selected.loc[selected["case"] == case_name]
+            .sort_values("hour", kind="stable")
+            .reset_index(drop=True)
+        )
+        if len(case_rows) != expected_hours:
+            raise ValueError(
+                f"hourly_results case {case_name} day {day_number} must "
+                f"have exactly {expected_hours} rows; found {len(case_rows)}"
+            )
+        if tuple(case_rows["period_role"].tolist()) != expected_roles:
+            raise ValueError(
+                f"hourly_results case {case_name} day {day_number} has "
+                "invalid period_role sequence"
+            )
+        case_rows["hour"] = np.arange(expected_hours, dtype=int)
+        daily_cases.append(case_rows)
+
+    daily_results = pd.concat(daily_cases, ignore_index=True)
+    daily_metrics = pd.DataFrame(
+        [
+            {
+                "case": case_name,
+                **summarize_costs(
+                    daily_results.loc[daily_results["case"] == case_name]
+                ),
+            }
+            for case_name in CASE_ORDER
+        ]
+    )
+    _validate_plot_inputs(
+        daily_results,
+        daily_metrics,
+        expected_period_roles=expected_roles,
+    )
+    return daily_results, daily_metrics
+
+
+def make_daily_plots(
+    hourly_results: pd.DataFrame,
+    day_number: int,
+    output_dir: Path,
+) -> Path:
+    daily_results, daily_metrics = _prepare_daily_plot_inputs(
+        hourly_results,
+        day_number,
+    )
+    daily_output_dir = Path(output_dir) / f"day_{day_number:02d}"
+    daily_output_dir.mkdir(parents=True, exist_ok=True)
+    scope = "24+3 h" if day_number == 28 else "24 h"
+
+    _draw_day_ahead_power_results(
+        daily_results,
+        daily_output_dir / PLOT_FILENAMES[0],
+        f"Day {day_number:02d} {scope} Day-Ahead Power Results",
+    )
+    _draw_compute_scheduling_results(
+        daily_results,
+        daily_output_dir / PLOT_FILENAMES[1],
+        f"Day {day_number:02d} {scope} Day-Ahead Compute Scheduling",
+    )
+    _draw_battery_operation_results(
+        daily_results,
+        daily_output_dir / PLOT_FILENAMES[2],
+        f"Day {day_number:02d} {scope} Day-Ahead Battery Operation",
+    )
+    _draw_renewable_dispatch_results(
+        daily_results,
+        daily_output_dir / PLOT_FILENAMES[3],
+        f"Day {day_number:02d} {scope} Day-Ahead Renewable Dispatch",
+    )
+    _draw_cost_comparison(
+        daily_metrics,
+        daily_output_dir / PLOT_FILENAMES[4],
+        f"Day {day_number:02d} Operating Cost",
+        (
+            "Operating cost (CNY; analysis + settlement tail)"
+            if day_number == 28
+            else "Operating cost (CNY; analysis)"
+        ),
+    )
+    return daily_output_dir
 
 
 def make_plots(

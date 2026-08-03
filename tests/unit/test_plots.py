@@ -7,10 +7,14 @@ from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
-from PIL import Image, ImageDraw
+from PIL import Image, ImageColor, ImageDraw
 
 import dc_energy_opt.reporting.plots as plots
-from dc_energy_opt.reporting.plots import PLOT_FILENAMES, make_plots
+from dc_energy_opt.reporting.plots import (
+    PLOT_FILENAMES,
+    make_daily_plots,
+    make_plots,
+)
 
 
 CASE_ORDER = [
@@ -77,7 +81,70 @@ def _zero_plot_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:
     return pd.DataFrame(hourly_rows), metrics
 
 
+def _daily_plot_inputs(day_number: int) -> pd.DataFrame:
+    hourly_results, _ = _zero_plot_inputs()
+    if day_number != 28:
+        hourly_results = hourly_results.loc[
+            hourly_results["hour"] < 24
+        ].copy()
+    hourly_results["day"] = day_number
+    hourly_results["hour"] += (day_number - 1) * 24
+    return hourly_results
+
+
 class PlotTests(unittest.TestCase):
+    def test_make_daily_plots_writes_five_images_for_day_01_and_28(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_root = Path(temporary_directory) / "figures"
+            for day_number, expected_hours in ((1, 24), (28, 27)):
+                with self.subTest(day_number=day_number):
+                    hourly_results = _daily_plot_inputs(day_number)
+                    daily_output = make_daily_plots(
+                        hourly_results,
+                        day_number,
+                        output_root,
+                    )
+
+                    self.assertEqual(
+                        daily_output,
+                        output_root / f"day_{day_number:02d}",
+                    )
+                    self.assertEqual(
+                        sorted(path.name for path in daily_output.glob("*.png")),
+                        sorted(PLOT_FILENAMES),
+                    )
+                    self.assertEqual(
+                        hourly_results.groupby("case").size().unique().tolist(),
+                        [expected_hours],
+                    )
+
+    def test_settlement_tail_uses_gray_shading_without_purple_line(
+        self,
+    ) -> None:
+        data = pd.DataFrame(
+            {
+                "hour": np.arange(27, dtype=int),
+                "period_role": ["analysis"] * 24
+                + ["settlement_tail"] * 3,
+            }
+        )
+        image = Image.new("RGB", (140, 110), "#FFFFFF")
+        draw = ImageDraw.Draw(image)
+
+        plots._mark_settlement_tail(
+            draw,
+            data,
+            (10, 10, 130, 100),
+            0.0,
+            26.0,
+        )
+
+        pixels = list(image.get_flattened_data())
+        self.assertIn(ImageColor.getrgb("#E2E8F0"), pixels)
+        self.assertNotIn(ImageColor.getrgb("#7C3AED"), pixels)
+
     def test_plot_filenames_are_the_formal_five_outputs(self) -> None:
         self.assertEqual(
             PLOT_FILENAMES,

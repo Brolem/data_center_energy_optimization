@@ -43,6 +43,17 @@ conda run -n scip_env python run_day_ahead_experiment.py
 - `--output-dir`：完整实验输出目录；
 - `--show-solver-log`：显示 SCIP 求解日志。
 
+已有 `hourly_dispatch.csv` 时，可输入指定日期直接生成单日图，无需重新求解：
+
+```powershell
+conda run -n scip_env python plot_day_ahead_day.py `
+  --hourly-dispatch outputs/houston_2020_main/results/hourly_dispatch.csv `
+  --day 28 `
+  --output-dir outputs/houston_2020_main/figures
+```
+
+`--day` 必须位于 `1..28`。第 1～27 天输出 24 小时；第 28 天输出 24 小时分析期和 3 小时结算尾段，尾段使用浅灰背景标识，其成本包含在第 28 天成本分解图中。
+
 ## 5. 输出结构
 
 ```text
@@ -61,7 +72,13 @@ outputs/houston_2020_main/
 │   ├── compute_schedule.png
 │   ├── battery_dispatch.png
 │   ├── renewable_dispatch.png
-│   └── cost_breakdown.png
+│   ├── cost_breakdown.png
+│   └── day_XX/
+│       ├── power_dispatch.png
+│       ├── compute_schedule.png
+│       ├── battery_dispatch.png
+│       ├── renewable_dispatch.png
+│       └── cost_breakdown.png
 ├── models/<case>/<window>/
 │   ├── stage_1_cost.lp
 │   └── stage_2_delay.lp

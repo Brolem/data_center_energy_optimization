@@ -36,6 +36,17 @@ conda run -n scip_env python run_day_ahead_experiment.py
 
 默认输出位于 `outputs/houston_2020_main/`，包含输入快照、结果表、五张图、按算例和窗口分层的 LP 模型，以及 `run_metadata.json`。发布采用同级临时目录整体替换；失败时保留上一次完整结果。
 
+已有完整实验结果时，可直接生成指定日期的五张图，无需重新求解：
+
+```powershell
+conda run -n scip_env python plot_day_ahead_day.py `
+  --hourly-dispatch outputs/houston_2020_main/results/hourly_dispatch.csv `
+  --day 28 `
+  --output-dir outputs/houston_2020_main/figures
+```
+
+结果写入 `figures/day_XX/`。第 1～27 天绘制 24 小时；第 28 天绘制 24 小时分析期和 3 小时浅灰背景标识的结算尾段。
+
 ## 测试
 
 ```powershell

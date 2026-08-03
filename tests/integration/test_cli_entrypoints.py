@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -9,6 +10,7 @@ import pandas as pd
 
 import run_day_ahead_experiment
 import run_first_version
+import plot_day_ahead_day
 import dc_energy_opt
 from dc_energy_opt.config import Parameters
 from dc_energy_opt.data import load_and_prepare, load_houston_energy_scenario
@@ -17,6 +19,41 @@ from dc_energy_opt.experiments import ExperimentResult
 
 
 class CliEntrypointTests(unittest.TestCase):
+    def test_daily_plot_command_reads_existing_csv_and_delegates(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            hourly_path = root / "hourly_dispatch.csv"
+            hourly_path.write_text("case,day\njoint,28\n", encoding="utf-8")
+            output_dir = root / "figures"
+            daily_output = output_dir / "day_28"
+            with (
+                patch(
+                    "plot_day_ahead_day.make_daily_plots",
+                    return_value=daily_output,
+                ) as make_daily,
+                patch("sys.stdout", new_callable=io.StringIO) as stdout,
+            ):
+                plot_day_ahead_day.main(
+                    [
+                        "--hourly-dispatch",
+                        str(hourly_path),
+                        "--day",
+                        "28",
+                        "--output-dir",
+                        str(output_dir),
+                    ]
+                )
+
+            hourly_results, day_number, actual_output = (
+                make_daily.call_args.args
+            )
+            self.assertEqual(hourly_results.to_dict("records"), [
+                {"case": "joint", "day": 28}
+            ])
+            self.assertEqual(day_number, 28)
+            self.assertEqual(actual_output, output_dir)
+            self.assertIn(str(daily_output), stdout.getvalue())
+
     @staticmethod
     def _experiment() -> ExperimentResult:
         return ExperimentResult(
