@@ -43,6 +43,8 @@ conda run -n scip_env python run_day_ahead_experiment.py
 - `--output-dir`：完整实验输出目录；
 - `--show-solver-log`：显示 SCIP 求解日志。
 
+主实验完成后，终端仅打印与优化目标直接相关的摘要：纯电网核算成本、纯电网所需峰值、风光成本贡献，以及四个正式算例的求解状态、总运行成本、成本节省率、柔性任务总延迟和最大延迟。纯电网核算使用 `renewables_only` 相同的 `dc_power_mw` 和逐时电价，不重新求解；完整元数据与其他指标仍保存在 `run_metadata.json` 和结果 CSV 中。
+
 已有 `hourly_dispatch.csv` 时，可输入指定日期直接生成单日图，无需重新求解：
 
 ```powershell

@@ -490,7 +490,10 @@ def build_and_solve(
 
     lp_output_dir = Path(lp_output_dir)
     lp_output_dir.mkdir(parents=True, exist_ok=True)
-    model.writeProblem(str(lp_output_dir / "stage_1_cost.lp"))
+    model.writeProblem(
+        str(lp_output_dir / "stage_1_cost.lp"),
+        verbose=show_log,
+    )
     primary_solve_started = time.perf_counter()
     model.optimize()
     primary_solve_time_s = time.perf_counter() - primary_solve_started
@@ -513,7 +516,10 @@ def build_and_solve(
         name="primary_cost_tolerance",
     )
     model.setObjective(total_task_delay_expr, "minimize")
-    model.writeProblem(str(lp_output_dir / "stage_2_delay.lp"))
+    model.writeProblem(
+        str(lp_output_dir / "stage_2_delay.lp"),
+        verbose=show_log,
+    )
     secondary_solve_started = time.perf_counter()
     model.optimize()
     secondary_solve_time_s = time.perf_counter() - secondary_solve_started

@@ -102,17 +102,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--hourly-dispatch",
         type=Path,
-        required=True,
+        default="outputs/houston_2020_main/results/hourly_dispatch.csv",
     )
     parser.add_argument(
         "--day",
         type=int,
-        required=True,
+        default=8,
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        required=True,
+        default="outputs/houston_2020_main/figures",
     )
     return parser.parse_args(argv)
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import io
 import unittest
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -115,6 +117,18 @@ class CostOptimizationModelTests(unittest.TestCase):
         self.assertFalse(
             (lp_output_dir / "lp_path_layout_secondary.lp").exists()
         )
+
+    def test_default_solve_does_not_print_lp_write_messages(self) -> None:
+        lp_output_dir = self.output_dir / "quiet_lp"
+        lp_output_dir.mkdir(exist_ok=True)
+
+        with patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            self.solve(
+                case_name="quiet_lp_messages",
+                lp_output_dir=lp_output_dir,
+            )
+
+        self.assertNotIn("wrote problem to file", stdout.getvalue())
 
     def test_primary_costs_are_independently_recomputed_in_cny(self) -> None:
         result, metrics = self.solve(case_name="primary_cost_recompute")

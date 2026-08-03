@@ -39,10 +39,7 @@ conda run -n scip_env python run_day_ahead_experiment.py
 已有完整实验结果时，可直接生成指定日期的五张图，无需重新求解：
 
 ```powershell
-conda run -n scip_env python plot_day_ahead_day.py `
-  --hourly-dispatch outputs/houston_2020_main/results/hourly_dispatch.csv `
-  --day 28 `
-  --output-dir outputs/houston_2020_main/figures
+conda run -n scip_env python plot_day_ahead_day.py --day 28
 ```
 
 结果写入 `figures/day_XX/`。第 1～27 天绘制 24 小时；第 28 天绘制 24 小时分析期和 3 小时浅灰背景标识的结算尾段。终端首先打印纯电网核算成本、纯电网所需峰值和风光成本贡献，随后打印四个正式算例的成本摘要；不打印图片目录。

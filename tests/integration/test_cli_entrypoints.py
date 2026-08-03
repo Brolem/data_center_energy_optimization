@@ -81,13 +81,32 @@ class CliEntrypointTests(unittest.TestCase):
     @staticmethod
     def _experiment() -> ExperimentResult:
         return ExperimentResult(
-            hourly_dispatch=pd.DataFrame(),
+            hourly_dispatch=pd.DataFrame(
+                {
+                    "case": ["renewables_only", "renewables_only"],
+                    "dc_power_mw": [2.0, 1.0],
+                    "electricity_price_cny_per_kwh": [0.5, 0.2],
+                }
+            ),
             daily_metrics=pd.DataFrame(),
             case_metrics=pd.DataFrame(
                 {
-                    "case": ["renewables_only"],
-                    "status": ["optimal"],
-                    "operating_cost_cny": [1.0],
+                    "case": [
+                        "renewables_only",
+                        "renewables_shift",
+                        "renewables_storage",
+                        "joint",
+                    ],
+                    "status": ["optimal"] * 4,
+                    "operating_cost_cny": [1000.0, 900.0, 950.0, 850.0],
+                    "operating_cost_savings_vs_renewables_only_pct": [
+                        0.0,
+                        10.0,
+                        5.0,
+                        15.0,
+                    ],
+                    "total_task_delay_cpu_hours": [0.0, 3.0, 0.0, 2.0],
+                    "maximum_task_delay_h": [0, 2, 0, 1],
                 }
             ),
             metadata={"scenario_status": "houston_2020_main_experiment"},
@@ -171,9 +190,22 @@ class CliEntrypointTests(unittest.TestCase):
             show_solver_log=True,
         )
         printed = stdout.getvalue()
-        self.assertIn("houston_2020_main_experiment", printed)
-        self.assertIn("Operating cost metrics:", printed)
+        self.assertIn(
+            "Grid-only accounting baseline: 1200.0000 CNY",
+            printed,
+        )
+        self.assertIn("Required grid peak: 2.0000 MW", printed)
+        self.assertIn(
+            "Wind + solar contribution: 200.0000 CNY (16.6667%)",
+            printed,
+        )
+        self.assertIn("operating_cost", printed)
+        self.assertIn("total_delay", printed)
+        self.assertIn("max_delay", printed)
         self.assertIn("renewables_only", printed)
+        self.assertIn("joint", printed)
+        self.assertNotIn("houston_2020_main_experiment", printed)
+        self.assertNotIn("Operating cost metrics:", printed)
 
     def test_legacy_flags_map_to_the_same_formal_experiment_call(self) -> None:
         workload_path = Path("legacy-workload.csv")
