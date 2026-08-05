@@ -1286,6 +1286,149 @@ def _validated_task_delay_rows(
     return rows_by_case
 
 
+def _draw_single_day_task_delay_objective_plot(
+    rows_by_case: dict[str, pd.DataFrame],
+    output_path: Path,
+    day_number: int,
+) -> Path:
+    values = np.array(
+        [
+            float(rows_by_case[case_name].iloc[0][column])
+            for case_name in TASK_DELAY_CASES
+            for column in (
+                "primary_task_delay_cpu_hours",
+                "secondary_task_delay_cpu_hours",
+            )
+        ],
+        dtype=float,
+    )
+    y_max = max(float(np.max(values)) * 1.18, 1.0)
+    image = Image.new("RGB", (1800, 720), BACKGROUND)
+    draw = ImageDraw.Draw(image)
+    _draw_header(
+        draw,
+        f"Day {day_number:02d} Primary vs Secondary Weighted Task Delay",
+    )
+
+    panel = (18, 100, 1782, 710)
+    draw.rounded_rectangle(panel, radius=12, fill=PANEL, outline=GRID)
+    draw.text(
+        (38, 116),
+        "Task-shifting cases | lower is better",
+        font=_font(21, bold=True),
+        fill=TEXT,
+    )
+    _draw_legend(
+        draw,
+        730,
+        120,
+        [
+            ("Primary cost-optimal", "#94A3B8"),
+            ("Secondary: Renewables + shift", CASE_COLORS["renewables_shift"]),
+            ("Secondary: Joint", CASE_COLORS["joint"]),
+        ],
+        max_x=1745,
+    )
+
+    plot = (155, 190, 1745, 555)
+    plot_left, plot_top, plot_right, plot_bottom = plot
+    draw.rectangle(plot, outline=MUTED, width=1)
+    for index in range(5):
+        fraction = index / 4.0
+        y = round(plot_bottom - fraction * (plot_bottom - plot_top))
+        value = fraction * y_max
+        draw.line((plot_left, y, plot_right, y), fill=GRID, width=1)
+        label = _tick_label(value)
+        label_width = draw.textlength(label, font=_font(14))
+        draw.text(
+            (plot_left - label_width - 12, y - 9),
+            label,
+            font=_font(14),
+            fill=MUTED,
+        )
+    _draw_vertical_text(
+        image,
+        "Weighted delay (p.u.·h)",
+        38,
+        (plot_top + plot_bottom) // 2,
+    )
+
+    centers = (600, 1300)
+    bar_width = 145
+    for center, case_name in zip(centers, TASK_DELAY_CASES, strict=True):
+        row = rows_by_case[case_name].iloc[0]
+        primary = float(row["primary_task_delay_cpu_hours"])
+        secondary = float(row["secondary_task_delay_cpu_hours"])
+        primary_top = round(
+            plot_bottom - primary / y_max * (plot_bottom - plot_top)
+        )
+        secondary_top = round(
+            plot_bottom - secondary / y_max * (plot_bottom - plot_top)
+        )
+        primary_bounds = (
+            center - bar_width - 8,
+            primary_top,
+            center - 8,
+            plot_bottom,
+        )
+        secondary_bounds = (
+            center + 8,
+            secondary_top,
+            center + bar_width + 8,
+            plot_bottom,
+        )
+        draw.rectangle(primary_bounds, fill="#94A3B8")
+        draw.rectangle(secondary_bounds, fill=CASE_COLORS[case_name])
+        for value, bounds in (
+            (primary, primary_bounds),
+            (secondary, secondary_bounds),
+        ):
+            label = f"{value:.4f}"
+            label_width = draw.textlength(label, font=_font(16, bold=True))
+            draw.text(
+                (
+                    (bounds[0] + bounds[2] - label_width) / 2,
+                    max(plot_top + 3, bounds[1] - 27),
+                ),
+                label,
+                font=_font(16, bold=True),
+                fill=TEXT,
+            )
+        case_label = CASE_LABELS[case_name]
+        case_label_width = draw.textlength(
+            case_label,
+            font=_font(17, bold=True),
+        )
+        draw.text(
+            (center - case_label_width / 2, plot_bottom + 18),
+            case_label,
+            font=_font(17, bold=True),
+            fill=TEXT,
+        )
+        reduction = primary - secondary
+        reduction_pct = (
+            reduction / primary * 100.0 if primary > 0.0 else 0.0
+        )
+        reduction_label = (
+            f"Reduction {reduction:.4f} p.u.·h ({reduction_pct:.2f}%)"
+        )
+        reduction_width = draw.textlength(
+            reduction_label,
+            font=_font(15, bold=True),
+        )
+        draw.text(
+            (center - reduction_width / 2, plot_bottom + 49),
+            reduction_label,
+            font=_font(15, bold=True),
+            fill=CASE_COLORS[case_name],
+        )
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(output_path)
+    return output_path
+
+
 def make_task_delay_objective_plot(
     daily_metrics: pd.DataFrame,
     output_path: Path,
@@ -1293,6 +1436,12 @@ def make_task_delay_objective_plot(
     day_number: int | None = None,
 ) -> Path:
     rows_by_case = _validated_task_delay_rows(daily_metrics, day_number)
+    if day_number is not None:
+        return _draw_single_day_task_delay_objective_plot(
+            rows_by_case,
+            output_path,
+            day_number,
+        )
     all_values = np.concatenate(
         [
             rows[
@@ -1305,14 +1454,9 @@ def make_task_delay_objective_plot(
         ]
     )
     y_max = max(float(np.max(all_values)) * 1.15, 1.0)
-    title = (
-        "Primary vs Secondary Weighted Task Delay by Day"
-        if day_number is None
-        else f"Day {day_number:02d} Primary vs Secondary Weighted Task Delay"
-    )
     image = Image.new("RGB", (1800, 1050), BACKGROUND)
     draw = ImageDraw.Draw(image)
-    _draw_header(draw, title)
+    _draw_header(draw, "Primary vs Secondary Weighted Task Delay by Day")
     panel_bounds = ((18, 100, 1782, 565), (18, 580, 1782, 1045))
 
     for bounds, case_name in zip(
