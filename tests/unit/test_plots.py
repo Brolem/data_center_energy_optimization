@@ -149,6 +149,40 @@ class PlotTests(unittest.TestCase):
                         [expected_hours],
                     )
 
+    def test_task_delay_objective_plot_writes_full_and_daily_images(
+        self,
+    ) -> None:
+        daily_metrics = pd.DataFrame(
+            {
+                "case": [
+                    "renewables_shift",
+                    "renewables_shift",
+                    "joint",
+                    "joint",
+                ],
+                "day": [1, 2, 1, 2],
+                "primary_task_delay_cpu_hours": [5.0, 4.0, 6.0, 5.0],
+                "secondary_task_delay_cpu_hours": [3.0, 2.0, 4.0, 3.0],
+            }
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            full_path = root / "task_delay_objectives.png"
+            day_path = root / "day_02" / "task_delay_objectives.png"
+
+            plots.make_task_delay_objective_plot(daily_metrics, full_path)
+            plots.make_task_delay_objective_plot(
+                daily_metrics,
+                day_path,
+                day_number=2,
+            )
+
+            for output_path in (full_path, day_path):
+                with Image.open(output_path) as image:
+                    self.assertEqual(image.size, (1800, 1050))
+                    self.assertEqual(image.mode, "RGB")
+                    image.verify()
+
     def test_settlement_tail_uses_gray_shading_without_purple_line(
         self,
     ) -> None:

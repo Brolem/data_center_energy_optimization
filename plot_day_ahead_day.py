@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from dc_energy_opt.reporting import make_daily_plots
+from dc_energy_opt.reporting import (
+    TASK_DELAY_PLOT_FILENAME,
+    make_daily_plots,
+    make_task_delay_objective_plot,
+)
 
 
 FORMAL_CASES = (
@@ -110,6 +114,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=8,
     )
     parser.add_argument(
+        "--daily-metrics",
+        type=Path,
+        default="outputs/houston_2020_main/results/daily_metrics.csv",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default="outputs/houston_2020_main/figures",
@@ -123,12 +132,22 @@ def main(argv: list[str] | None = None) -> None:
         raise FileNotFoundError(
             f"hourly_dispatch.csv 不存在: {args.hourly_dispatch}"
         )
+    if not args.daily_metrics.is_file():
+        raise FileNotFoundError(
+            f"daily_metrics.csv 不存在: {args.daily_metrics}"
+        )
     hourly_results = pd.read_csv(args.hourly_dispatch)
+    daily_metrics = pd.read_csv(args.daily_metrics)
     print(format_daily_objective_summary(hourly_results, args.day))
-    make_daily_plots(
+    daily_output_dir = make_daily_plots(
         hourly_results,
         args.day,
         args.output_dir,
+    )
+    make_task_delay_objective_plot(
+        daily_metrics,
+        daily_output_dir / TASK_DELAY_PLOT_FILENAME,
+        day_number=args.day,
     )
 
 

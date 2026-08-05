@@ -243,6 +243,10 @@ class Houston2020ExperimentTests(unittest.TestCase):
                     ),
                     patch(
                         "dc_energy_opt.experiments.houston_2020."
+                        "make_task_delay_objective_plot"
+                    ),
+                    patch(
+                        "dc_energy_opt.experiments.houston_2020."
                         "software_versions",
                         return_value={},
                     ),
@@ -380,6 +384,10 @@ class Houston2020ExperimentTests(unittest.TestCase):
                 ),
                 patch(
                     "dc_energy_opt.experiments.houston_2020."
+                    "make_task_delay_objective_plot"
+                ),
+                patch(
+                    "dc_energy_opt.experiments.houston_2020."
                     "software_versions",
                     return_value={},
                 ),
@@ -448,7 +456,7 @@ class Houston2020ExperimentTests(unittest.TestCase):
             )
             self.assertEqual(
                 sorted(path.name for path in (output_dir / "figures").iterdir()),
-                sorted(PLOT_FILENAMES),
+                sorted([*PLOT_FILENAMES, "task_delay_objectives.png"]),
             )
 
             self.assertEqual(len(experiment.hourly_dispatch), 2700)
@@ -468,6 +476,14 @@ class Houston2020ExperimentTests(unittest.TestCase):
                     "case", sort=False
                 ).size().tolist(),
                 [28, 28, 28, 28],
+            )
+            self.assertIn(
+                "primary_task_delay_cpu_hours",
+                experiment.daily_metrics.columns,
+            )
+            self.assertIn(
+                "secondary_task_delay_cpu_hours",
+                experiment.daily_metrics.columns,
             )
 
             lp_files = list((output_dir / "models").rglob("*.lp"))

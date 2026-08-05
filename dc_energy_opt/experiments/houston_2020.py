@@ -10,7 +10,12 @@ import pandas as pd
 from ..config import Parameters
 from ..data import load_and_prepare, load_houston_energy_scenario
 from ..optimization import ROLLING_CASES, run_rolling_day_ahead
-from ..reporting import make_plots, software_versions
+from ..reporting import (
+    TASK_DELAY_PLOT_FILENAME,
+    make_plots,
+    make_task_delay_objective_plot,
+    software_versions,
+)
 from .artifacts import staged_run_directory
 
 
@@ -159,6 +164,10 @@ def run_houston_2020_experiment(
             index=False,
         )
         make_plots(all_results, case_metrics, paths.figures)
+        make_task_delay_objective_plot(
+            daily_metrics,
+            paths.figures / TASK_DELAY_PLOT_FILENAME,
+        )
 
         parameter_values = asdict(experiment_params)
         parameter_values.update(

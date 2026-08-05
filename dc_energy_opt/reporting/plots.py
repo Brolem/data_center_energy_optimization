@@ -43,6 +43,8 @@ PLOT_FILENAMES = [
     "renewable_dispatch.png",
     "cost_breakdown.png",
 ]
+TASK_DELAY_PLOT_FILENAME = "task_delay_objectives.png"
+TASK_DELAY_CASES = ("renewables_shift", "joint")
 HOURLY_NUMERIC_COLUMNS = [
     "hour",
     "cpu_arrival_pu",
@@ -348,6 +350,7 @@ def _panel_axes(
     x_min: float = 0.0,
     x_max: float = 23.0,
     x_ticks: tuple[int, ...] = (0, 6, 12, 18, 23),
+    x_label: str = "Hour",
 ) -> tuple[int, int, int, int]:
     left, top, right, bottom = bounds
     draw.rounded_rectangle(bounds, radius=12, fill=PANEL, outline=GRID)
@@ -394,10 +397,10 @@ def _panel_axes(
             font=_font(13),
             fill=MUTED,
         )
-    hour_width = draw.textlength("Hour", font=_font(13))
+    x_label_width = draw.textlength(x_label, font=_font(13))
     draw.text(
-        ((plot_left + plot_right - hour_width) / 2, bottom - 24),
-        "Hour",
+        ((plot_left + plot_right - x_label_width) / 2, bottom - 24),
+        x_label,
         font=_font(13),
         fill=MUTED,
     )
@@ -1206,6 +1209,232 @@ def _draw_cost_comparison(
             fill=MUTED,
         )
     image.save(output_path)
+
+
+def _validated_task_delay_rows(
+    daily_metrics: pd.DataFrame,
+    day_number: int | None,
+) -> dict[str, pd.DataFrame]:
+    required_columns = [
+        "case",
+        "day",
+        "primary_task_delay_cpu_hours",
+        "secondary_task_delay_cpu_hours",
+    ]
+    missing_columns = [
+        column for column in required_columns
+        if column not in daily_metrics.columns
+    ]
+    if missing_columns:
+        raise ValueError(
+            "daily_metrics missing required columns: "
+            f"{', '.join(missing_columns)}"
+        )
+    for column in required_columns[1:]:
+        if not pd.api.types.is_numeric_dtype(daily_metrics[column]):
+            raise ValueError(
+                f"daily_metrics numeric column {column} must be numeric"
+            )
+        values = daily_metrics[column].to_numpy(dtype=float)
+        if not np.isfinite(values).all():
+            raise ValueError(
+                f"daily_metrics numeric column {column} contains "
+                "non-finite values"
+            )
+    day_values = daily_metrics["day"].to_numpy(dtype=float)
+    if not np.equal(day_values, np.round(day_values)).all():
+        raise ValueError("daily_metrics day values must be integers")
+    for column in required_columns[2:]:
+        if (
+            daily_metrics[column].to_numpy(dtype=float)
+            < -NONNEGATIVE_TOLERANCE
+        ).any():
+            raise ValueError(
+                f"daily_metrics delay column {column} contains values "
+                f"below -{NONNEGATIVE_TOLERANCE}"
+            )
+    if day_number is not None:
+        if isinstance(day_number, bool) or not isinstance(day_number, int):
+            raise TypeError("day_number 必须为整数。")
+        daily_metrics = daily_metrics.loc[
+            daily_metrics["day"] == day_number
+        ]
+
+    rows_by_case: dict[str, pd.DataFrame] = {}
+    expected_days: tuple[int, ...] | None = None
+    for case_name in TASK_DELAY_CASES:
+        rows = (
+            daily_metrics.loc[daily_metrics["case"] == case_name]
+            .sort_values("day")
+            .reset_index(drop=True)
+        )
+        if rows.empty:
+            suffix = f" day {day_number}" if day_number is not None else ""
+            raise ValueError(f"daily_metrics missing {case_name}{suffix}")
+        if not rows["day"].is_unique:
+            raise ValueError(
+                f"daily_metrics case {case_name} day values must be unique"
+            )
+        case_days = tuple(rows["day"].astype(int).tolist())
+        if expected_days is None:
+            expected_days = case_days
+        elif case_days != expected_days:
+            raise ValueError(
+                "daily_metrics task-delay cases must contain identical days"
+            )
+        rows_by_case[case_name] = rows
+    return rows_by_case
+
+
+def make_task_delay_objective_plot(
+    daily_metrics: pd.DataFrame,
+    output_path: Path,
+    *,
+    day_number: int | None = None,
+) -> Path:
+    rows_by_case = _validated_task_delay_rows(daily_metrics, day_number)
+    all_values = np.concatenate(
+        [
+            rows[
+                [
+                    "primary_task_delay_cpu_hours",
+                    "secondary_task_delay_cpu_hours",
+                ]
+            ].to_numpy(dtype=float).reshape(-1)
+            for rows in rows_by_case.values()
+        ]
+    )
+    y_max = max(float(np.max(all_values)) * 1.15, 1.0)
+    title = (
+        "Primary vs Secondary Weighted Task Delay by Day"
+        if day_number is None
+        else f"Day {day_number:02d} Primary vs Secondary Weighted Task Delay"
+    )
+    image = Image.new("RGB", (1800, 1050), BACKGROUND)
+    draw = ImageDraw.Draw(image)
+    _draw_header(draw, title)
+    panel_bounds = ((18, 100, 1782, 565), (18, 580, 1782, 1045))
+
+    for bounds, case_name in zip(
+        panel_bounds,
+        TASK_DELAY_CASES,
+        strict=True,
+    ):
+        rows = rows_by_case[case_name]
+        days = rows["day"].to_numpy(dtype=int)
+        primary = rows["primary_task_delay_cpu_hours"].to_numpy(
+            dtype=float
+        )
+        secondary = rows["secondary_task_delay_cpu_hours"].to_numpy(
+            dtype=float
+        )
+        primary_total = float(primary.sum())
+        secondary_total = float(secondary.sum())
+        reduction = primary_total - secondary_total
+        reduction_pct = (
+            reduction / primary_total * 100.0
+            if primary_total > 0.0
+            else 0.0
+        )
+        panel_title = (
+            f"{CASE_LABELS[case_name]} | reduction "
+            f"{reduction:.4f} p.u.·h ({reduction_pct:.2f}%)"
+        )
+        if len(days) == 1:
+            x_ticks = (int(days[0]),)
+        else:
+            preferred_ticks = (1, 7, 14, 21, 28)
+            x_ticks = tuple(
+                tick for tick in preferred_ticks
+                if int(days[0]) <= tick <= int(days[-1])
+            )
+            if int(days[0]) not in x_ticks:
+                x_ticks = (int(days[0]), *x_ticks)
+            if int(days[-1]) not in x_ticks:
+                x_ticks = (*x_ticks, int(days[-1]))
+        x_min = float(days[0]) - 0.5
+        x_max = float(days[-1]) + 0.5
+        plot = _panel_axes(
+            draw,
+            bounds,
+            panel_title,
+            0.0,
+            y_max,
+            "Weighted delay (p.u.·h)",
+            x_min=x_min,
+            x_max=x_max,
+            x_ticks=x_ticks,
+            x_label="Day",
+        )
+        _draw_legend(
+            draw,
+            bounds[0] + 500,
+            bounds[1] + 48,
+            [
+                ("Primary cost-optimal delay", "#94A3B8"),
+                ("Secondary delay-minimized", CASE_COLORS[case_name]),
+            ],
+            max_x=bounds[2] - 24,
+        )
+        plot_left, plot_top, plot_right, plot_bottom = plot
+        plot_width = plot_right - plot_left
+        x_span = max(x_max - x_min, 1.0)
+        slot_width = plot_width / max(len(days), 1)
+        bar_width = max(4, min(120, round(slot_width * 0.32)))
+        for day, primary_value, secondary_value in zip(
+            days,
+            primary,
+            secondary,
+            strict=True,
+        ):
+            center = round(
+                plot_left
+                + (float(day) - x_min) / x_span * plot_width
+            )
+            primary_top = round(
+                plot_bottom
+                - primary_value / y_max * (plot_bottom - plot_top)
+            )
+            secondary_top = round(
+                plot_bottom
+                - secondary_value / y_max * (plot_bottom - plot_top)
+            )
+            draw.rectangle(
+                (
+                    center - bar_width - 1,
+                    primary_top,
+                    center - 1,
+                    plot_bottom,
+                ),
+                fill="#94A3B8",
+            )
+            draw.rectangle(
+                (
+                    center + 1,
+                    secondary_top,
+                    center + bar_width + 1,
+                    plot_bottom,
+                ),
+                fill=CASE_COLORS[case_name],
+            )
+            if len(days) == 1:
+                for value, x, top in (
+                    (primary_value, center - bar_width // 2 - 1, primary_top),
+                    (secondary_value, center + bar_width // 2 + 1, secondary_top),
+                ):
+                    label = f"{value:.4f}"
+                    label_width = draw.textlength(label, font=_font(14))
+                    draw.text(
+                        (x - label_width / 2, max(plot_top + 2, top - 23)),
+                        label,
+                        font=_font(14, bold=True),
+                        fill=TEXT,
+                    )
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(output_path)
+    return output_path
 
 
 def _prepare_daily_plot_inputs(

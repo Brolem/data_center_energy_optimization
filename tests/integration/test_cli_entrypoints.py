@@ -38,6 +38,15 @@ class CliEntrypointTests(unittest.TestCase):
                     "hourly_operating_cost_cny": [800.0, 700.0, 600.0, 500.0],
                 }
             ).to_csv(hourly_path, index=False)
+            daily_metrics_path = root / "daily_metrics.csv"
+            pd.DataFrame(
+                {
+                    "case": ["renewables_shift", "joint"],
+                    "day": [28, 28],
+                    "primary_task_delay_cpu_hours": [5.0, 6.0],
+                    "secondary_task_delay_cpu_hours": [3.0, 4.0],
+                }
+            ).to_csv(daily_metrics_path, index=False)
             output_dir = root / "figures"
             daily_output = output_dir / "day_28"
             with (
@@ -45,12 +54,17 @@ class CliEntrypointTests(unittest.TestCase):
                     "plot_day_ahead_day.make_daily_plots",
                     return_value=daily_output,
                 ) as make_daily,
+                patch(
+                    "plot_day_ahead_day.make_task_delay_objective_plot",
+                ) as make_delay_plot,
                 patch("sys.stdout", new_callable=io.StringIO) as stdout,
             ):
                 plot_day_ahead_day.main(
                     [
                         "--hourly-dispatch",
                         str(hourly_path),
+                        "--daily-metrics",
+                        str(daily_metrics_path),
                         "--day",
                         "28",
                         "--output-dir",
@@ -64,6 +78,16 @@ class CliEntrypointTests(unittest.TestCase):
             self.assertEqual(len(hourly_results), 4)
             self.assertEqual(day_number, 28)
             self.assertEqual(actual_output, output_dir)
+            plotted_metrics, plotted_path = make_delay_plot.call_args.args
+            self.assertEqual(len(plotted_metrics), 2)
+            self.assertEqual(
+                plotted_path,
+                daily_output / "task_delay_objectives.png",
+            )
+            self.assertEqual(
+                make_delay_plot.call_args.kwargs,
+                {"day_number": 28},
+            )
             printed = stdout.getvalue()
             self.assertIn(
                 "Grid-only accounting baseline: 1000.0000 CNY",

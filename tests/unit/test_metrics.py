@@ -126,6 +126,9 @@ class MetricTests(unittest.TestCase):
             ),
         )
         window_metrics = {
+            "primary_total_task_delay_cpu_hours": 7.0,
+            "primary_committed_task_delay_cpu_hours": 4.5,
+            "total_task_delay_cpu_hours": 4.0,
             "committed_task_delay_cpu_hours": 2.5,
             "committed_maximum_task_delay_h": 3,
         }
@@ -163,10 +166,42 @@ class MetricTests(unittest.TestCase):
                 "actual_window_terminal_stored_energy_mwh": 1.0,
                 "carry_in_task_cpu_pu_hours": 0.3,
                 "carry_out_task_cpu_pu_hours": 0.4,
+                "primary_task_delay_cpu_hours": 7.0,
+                "secondary_task_delay_cpu_hours": 4.0,
                 "committed_task_delay_cpu_hours": 2.5,
                 "committed_maximum_task_delay_h": 3,
             },
         )
+
+    def test_summarize_nonfinal_day_uses_committed_delay_values(self) -> None:
+        result = _metric_hourly_rows()
+        window_metrics = {
+            "primary_total_task_delay_cpu_hours": 7.0,
+            "primary_committed_task_delay_cpu_hours": 4.5,
+            "total_task_delay_cpu_hours": 4.0,
+            "committed_task_delay_cpu_hours": 2.5,
+            "committed_maximum_task_delay_h": 3,
+        }
+
+        summary = summarize_daily_window(
+            case_name="renewables_shift",
+            day_number=1,
+            result=result,
+            stored_energy_mwh=1.0,
+            state=WindowSolveState(
+                stored_energy_mwh=1.0,
+                pending_flexible_tasks=(),
+            ),
+            committed_energy_mwh=None,
+            terminal_energy_mwh=None,
+            initial_energy_mwh=1.0,
+            carry_in_tasks=(),
+            window_metrics=window_metrics,
+            is_final_day=False,
+        )
+
+        self.assertEqual(summary["primary_task_delay_cpu_hours"], 4.5)
+        self.assertEqual(summary["secondary_task_delay_cpu_hours"], 2.5)
 
     def test_summarize_case_metrics_preserves_keys_formulas_and_types(
         self,

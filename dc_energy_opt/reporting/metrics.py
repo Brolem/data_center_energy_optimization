@@ -77,6 +77,16 @@ def summarize_daily_window(
                 for task in state.pending_flexible_tasks
             )
         ),
+        "primary_task_delay_cpu_hours": window_metrics[
+            "primary_total_task_delay_cpu_hours"
+            if is_final_day
+            else "primary_committed_task_delay_cpu_hours"
+        ],
+        "secondary_task_delay_cpu_hours": window_metrics[
+            "total_task_delay_cpu_hours"
+            if is_final_day
+            else "committed_task_delay_cpu_hours"
+        ],
         "committed_task_delay_cpu_hours": window_metrics[
             "committed_task_delay_cpu_hours"
         ],

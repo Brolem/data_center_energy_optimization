@@ -45,11 +45,12 @@ conda run -n scip_env python run_day_ahead_experiment.py
 
 主实验完成后，终端仅打印与优化目标直接相关的摘要：纯电网核算成本、纯电网所需峰值、风光成本贡献，以及四个正式算例的求解状态、总运行成本、成本节省率、柔性任务总延迟和最大延迟。纯电网核算使用 `renewables_only` 相同的 `dc_power_mw` 和逐时电价，不重新求解；完整元数据与其他指标仍保存在 `run_metadata.json` 和结果 CSV 中。
 
-已有 `hourly_dispatch.csv` 时，可输入指定日期直接生成单日图，无需重新求解：
+已有 `hourly_dispatch.csv` 和 `daily_metrics.csv` 时，可输入指定日期直接生成单日图，无需重新求解：
 
 ```powershell
 conda run -n scip_env python plot_day_ahead_day.py `
   --hourly-dispatch outputs/houston_2020_main/results/hourly_dispatch.csv `
+  --daily-metrics outputs/houston_2020_main/results/daily_metrics.csv `
   --day 28 `
   --output-dir outputs/houston_2020_main/figures
 ```
@@ -75,19 +76,21 @@ outputs/houston_2020_main/
 │   ├── battery_dispatch.png
 │   ├── renewable_dispatch.png
 │   ├── cost_breakdown.png
+│   ├── task_delay_objectives.png
 │   └── day_XX/
 │       ├── power_dispatch.png
 │       ├── compute_schedule.png
 │       ├── battery_dispatch.png
 │       ├── renewable_dispatch.png
-│       └── cost_breakdown.png
+│       ├── cost_breakdown.png
+│       └── task_delay_objectives.png
 ├── models/<case>/<window>/
 │   ├── stage_1_cost.lp
 │   └── stage_2_delay.lp
 └── run_metadata.json
 ```
 
-默认完整运行生成 2,700 行 `hourly_dispatch.csv`、112 行 `daily_metrics.csv`、4 行 `case_metrics.csv`、232 个 LP 文件和 5 张 PNG。四个算例各含 672 小时分析期与 3 小时结算尾段。
+默认完整运行生成 2,700 行 `hourly_dispatch.csv`、112 行 `daily_metrics.csv`、4 行 `case_metrics.csv`、232 个 LP 文件和 6 张 PNG。四个算例各含 672 小时分析期与 3 小时结算尾段。
 
 ## 6. 结果字段
 
@@ -99,7 +102,7 @@ outputs/houston_2020_main/
 - 储能：`charge_mw`、`discharge_mw`、充放电状态、起止 SOC 与起止电量；
 - 成本：小时购电、光伏运维、风电运维、储能运维、储能退化和总运行成本。
 
-`daily_metrics.csv` 记录每天的窗口初末电量、协调边界、遗留任务量、当日任务延迟和结算尾段成本。`case_metrics.csv` 汇总五项成本、分析期与尾段成本、供能占比、弃电率、储能充放电量与等效完整循环、并网约束生效小时、任务延迟、守恒误差和求解状态。
+`daily_metrics.csv` 记录每天的窗口初末电量、协调边界、遗留任务量、一级与二级加权任务延迟、当日任务延迟和结算尾段成本。第 1～27 天的一级、二级延迟采用提交的 24 小时口径；第 28 天采用完整 27 小时窗口口径以结清遗留任务。`case_metrics.csv` 汇总五项成本、分析期与尾段成本、供能占比、弃电率、储能充放电量与等效完整循环、并网约束生效小时、任务延迟、守恒误差和求解状态。
 
 `operating_cost_cny` 等于 672 小时分析期成本与 3 小时结算尾段成本之和；预热成本不计入。储能等效完整循环定义为放电能量除以 2 MWh。
 

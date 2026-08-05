@@ -638,6 +638,10 @@ class CostOptimizationModelTests(unittest.TestCase):
             metrics["primary_total_task_delay_cpu_hours"],
             metrics["total_task_delay_cpu_hours"],
         )
+        self.assertGreater(
+            metrics["primary_committed_task_delay_cpu_hours"],
+            metrics["committed_task_delay_cpu_hours"],
+        )
         self.assertAlmostEqual(
             metrics["total_task_delay_cpu_hours"], 0.0, places=8
         )

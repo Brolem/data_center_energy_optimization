@@ -509,6 +509,13 @@ def build_and_solve(
     primary_total_task_delay_value = float(
         model.getVal(total_task_delay_expr)
     )
+    primary_committed_task_delay_value = float(
+        sum(
+            (target - origin) * model.getVal(variable)
+            for (origin, target), variable in shifted_cpu.items()
+            if target < commit_hours
+        )
+    )
     model.freeTransform()
     model.addCons(
         primary_cost_expr
@@ -831,6 +838,9 @@ def build_and_solve(
         "primary_operating_cost_cny": primary_operating_cost_value,
         "primary_total_task_delay_cpu_hours": (
             primary_total_task_delay_value
+        ),
+        "primary_committed_task_delay_cpu_hours": (
+            primary_committed_task_delay_value
         ),
         "total_task_delay_cpu_hours": total_task_delay_value,
         "average_flexible_task_delay_h": average_flexible_task_delay_h,
