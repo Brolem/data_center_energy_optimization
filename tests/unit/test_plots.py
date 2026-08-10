@@ -252,6 +252,68 @@ class PlotTests(unittest.TestCase):
                     self.assertEqual(image.mode, "RGB")
                     image.verify()
 
+    def test_daily_case_cost_plots_render_daily_costs_as_bars(self) -> None:
+        daily_metrics = pd.DataFrame(
+            {
+                "case": [
+                    case_name
+                    for case_name in CASE_ORDER
+                    for _ in range(3)
+                ],
+                "day": [1, 2, 3] * len(CASE_ORDER),
+                "operating_cost_cny": [
+                    100.0,
+                    200.0,
+                    300.0,
+                    110.0,
+                    210.0,
+                    310.0,
+                    120.0,
+                    220.0,
+                    320.0,
+                    130.0,
+                    230.0,
+                    330.0,
+                ],
+                "settlement_tail_operating_cost_cny": 0.0,
+            }
+        )
+        hourly_dispatch = pd.DataFrame(
+            {
+                "case": [
+                    case_name
+                    for case_name in CASE_ORDER
+                    for _ in range(3)
+                ],
+                "day": [1, 2, 3] * len(CASE_ORDER),
+                "timestamp_lst": [
+                    "2020-05-01 00:00:00",
+                    "2020-05-02 00:00:00",
+                    "2020-05-03 00:00:00",
+                ]
+                * len(CASE_ORDER),
+                "period_role": ["analysis", "analysis", "analysis"]
+                * len(CASE_ORDER),
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory) / "figures"
+            output_path = plots.make_daily_case_cost_plots(
+                daily_metrics,
+                hourly_dispatch,
+                output_dir,
+            )[0]
+
+            with Image.open(output_path) as image:
+                self.assertEqual(
+                    image.getpixel((974, 540)),
+                    ImageColor.getrgb(
+                        plots.CASE_COLORS["renewables_only"]
+                    ),
+                )
+                self.assertEqual(image.getpixel((160, 720)), (255, 255, 255))
+
     def test_settlement_tail_uses_gray_shading_without_purple_line(
         self,
     ) -> None:

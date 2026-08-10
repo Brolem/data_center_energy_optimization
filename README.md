@@ -44,13 +44,13 @@ conda run -n scip_env python plot_day_ahead_day.py --day 28
 
 命令同时读取同一结果目录中的 `daily_metrics.csv`。结果写入 `figures/day_XX/`；`task_delay_objectives.png` 用上下双面板展示 `renewables_shift` 与 `joint` 当天的一级、二级加权延迟。第 1～27 天绘制 24 小时；第 28 天绘制 24 小时分析期和 3 小时浅灰背景标识的结算尾段。终端首先打印纯电网核算成本、纯电网所需峰值和风光成本贡献，随后打印四个正式算例的成本摘要；不打印图片目录。
 
-已有完整实验结果时，也可直接生成四个算例各自的每日成本折线图：
+已有完整实验结果时，也可直接生成四个算例各自的每日成本柱形图：
 
 ```powershell
 conda run -n scip_env python plot_daily_case_costs.py
 ```
 
-横轴日期来自 `hourly_dispatch.csv` 的分析期时间戳，纵轴来自 `daily_metrics.csv` 的 `operating_cost_cny`。第 28 日的 3 小时结算尾段成本仅标注在图中，不计入折线。
+横轴日期来自 `hourly_dispatch.csv` 的分析期时间戳，纵轴来自 `daily_metrics.csv` 的 `operating_cost_cny`。第 28 日的 3 小时结算尾段成本仅标注在图中，不计入柱体。
 
 ## 测试
 

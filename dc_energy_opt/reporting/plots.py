@@ -1413,6 +1413,11 @@ def _draw_daily_case_cost_plot(
         (plot_top + plot_bottom) // 2,
     )
 
+    slot_width = (plot_right - plot_left) / max(len(costs), 1)
+    bar_centers = [
+        round(plot_left + slot_width * (index + 0.5))
+        for index in range(len(costs))
+    ]
     tick_indices = sorted(
         set(
             np.linspace(0, len(dates) - 1, min(5, len(dates)))
@@ -1423,7 +1428,7 @@ def _draw_daily_case_cost_plot(
     )
     x_max = max(float(len(costs) - 1), 1.0)
     for index in tick_indices:
-        x = round(plot_left + index / x_max * (plot_right - plot_left))
+        x = bar_centers[index]
         draw.line((x, plot_bottom, x, plot_bottom + 5), fill=MUTED, width=1)
         label = dates[index].strftime("%Y-%m-%d")
         label_width = draw.textlength(label, font=_font(13))
@@ -1441,7 +1446,7 @@ def _draw_daily_case_cost_plot(
         fill=MUTED,
     )
 
-    points = _xy_points(
+    value_points = _xy_points(
         x_values,
         costs,
         plot,
@@ -1450,11 +1455,22 @@ def _draw_daily_case_cost_plot(
         x_min=0.0,
         x_max=x_max,
     )
+    points = [
+        (bar_centers[index], y)
+        for index, (_, y) in enumerate(value_points)
+    ]
     color = CASE_COLORS[case_name]
-    if len(points) > 1:
-        draw.line(points, fill=color, width=4, joint="curve")
+    bar_width = max(14, min(38, round(slot_width * 0.65)))
     for x, y in points:
-        draw.ellipse((x - 5, y - 5, x + 5, y + 5), fill=color)
+        draw.rectangle(
+            (
+                x - bar_width // 2,
+                y,
+                x + bar_width // 2,
+                plot_bottom,
+            ),
+            fill=color,
+        )
 
     minimum_index = int(np.argmin(costs))
     maximum_index = int(np.argmax(costs))
