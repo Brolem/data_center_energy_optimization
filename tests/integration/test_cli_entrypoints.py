@@ -13,6 +13,7 @@ import run_first_version
 import plot_day_ahead_day
 import plot_daily_case_costs
 import run_flex_ratio_sensitivity
+import run_storage_scale_sensitivity
 import dc_energy_opt
 from dc_energy_opt.config import Parameters
 from dc_energy_opt.data import load_and_prepare, load_houston_energy_scenario
@@ -21,9 +22,50 @@ from dc_energy_opt.experiments import ExperimentResult
 from dc_energy_opt.experiments.flex_ratio_sensitivity import (
     FlexRatioSensitivityResult,
 )
+from dc_energy_opt.experiments.storage_scale_sensitivity import (
+    StorageScaleSensitivityResult,
+)
 
 
 class CliEntrypointTests(unittest.TestCase):
+    def test_storage_scale_sensitivity_command_delegates_and_prints_summary(
+        self,
+    ) -> None:
+        sensitivity_metrics = pd.DataFrame(
+            {
+                "storage_scale": [
+                    "energy_2p0_mwh_power_0p5_mw",
+                    "energy_4p0_mwh_power_1p0_mw",
+                    "energy_6p0_mwh_power_1p5_mw",
+                ],
+                "battery_energy_mwh": [2.0, 4.0, 6.0],
+                "battery_power_mw": [0.5, 1.0, 1.5],
+                "storage_base_savings_cny": [10.0, 12.0, 14.0],
+                "storage_shift_savings_cny": [6.0, 6.5, 7.0],
+                "storage_effect_on_shift_cny": [-2.0, -1.5, -1.0],
+            }
+        )
+        result = StorageScaleSensitivityResult(
+            metrics=sensitivity_metrics,
+            metadata={},
+        )
+
+        with patch(
+            "run_storage_scale_sensitivity."
+            "run_storage_scale_sensitivity_experiment",
+            return_value=result,
+        ) as run_experiment, patch(
+            "sys.stdout",
+            new_callable=io.StringIO,
+        ) as output:
+            run_storage_scale_sensitivity.main([])
+
+        self.assertEqual(run_experiment.call_count, 1)
+        summary = output.getvalue()
+        self.assertIn("Storage-scale sensitivity summary:", summary)
+        self.assertIn("energy_4p0_mwh_power_1p0_mw", summary)
+        self.assertIn("storage effect on shift=-1.5000 CNY", summary)
+
     def test_flex_ratio_sensitivity_command_delegates_and_prints_summary(
         self,
     ) -> None:

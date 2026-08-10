@@ -74,6 +74,8 @@ conda run -n scip_env python plot_daily_case_costs.py `
 conda run -n scip_env python run_flex_ratio_sensitivity.py
 ```
 
+固定 max_delay_h=3 的储能规模敏感性分析使用 run_storage_scale_sensitivity.py；三档储能项目、汇总结果和分析口径见 docs/houston_2020_storage_scale_sensitivity.md。
+
 默认扫描 `0.00,0.10,...,1.00`，以 `renewables_only` 对照 `renewables_shift`，以 `renewables_storage` 对照 `joint`。总成本始终包含 672 小时分析期和第 28 日 3 小时结算尾段；结果输出至 `outputs/houston_2020_flex_ratio_sensitivity/`，包含结果 CSV 和总成本、节省率、边际节省三张图。局部加密可使用 `--flex-ratios 0,0.05,0.1,0.15,0.2`。
 
 ## 5. 输出结构

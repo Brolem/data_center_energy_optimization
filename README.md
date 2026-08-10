@@ -1,5 +1,15 @@
 # Data Center Energy Optimization
 
+## 固定延迟储能规模敏感性
+
+固定 max_delay_h=3、分别运行 2.0 MWh / 0.5 MW、4.0 MWh / 1.0 MW 与 6.0 MWh / 1.5 MW 三档独立储能项目：
+
+~~~powershell
+conda run -n scip_env python run_storage_scale_sensitivity.py
+~~~
+
+每档结果保存在独立子目录，父目录额外保存横向汇总 CSV、两张比较图与分析报告。详见 [储能规模敏感性说明](docs/houston_2020_storage_scale_sensitivity.md)。
+
 ## 项目简介
 
 本项目使用 PySCIPOpt 建立数据中心跨日确定性日前调度模型，在满足算力需求、最大任务延迟、设备容量和储能状态约束的前提下，联合优化电网购电、风光利用、算力时移与电储能运行。当前正式实现为 Houston 2020 风光与 Google 2019 聚合工作负载的 28 天主实验。

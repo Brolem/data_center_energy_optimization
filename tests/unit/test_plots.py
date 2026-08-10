@@ -392,6 +392,42 @@ class PlotTests(unittest.TestCase):
                 )
                 self.assertEqual(len(gaplimit_paths), 3)
 
+    def test_storage_scale_sensitivity_plots_write_two_images(self) -> None:
+        storage_metrics = pd.DataFrame(
+            {
+                "storage_scale": [
+                    "energy_2p0_mwh_power_0p5_mw",
+                    "energy_4p0_mwh_power_1p0_mw",
+                    "energy_6p0_mwh_power_1p5_mw",
+                ],
+                "battery_energy_mwh": [2.0, 4.0, 6.0],
+                "battery_power_mw": [0.5, 1.0, 1.5],
+                "renewables_storage_cost_cny": [90.0, 86.0, 82.0],
+                "joint_cost_cny": [84.0, 80.0, 76.0],
+                "no_storage_shift_savings_cny": [8.0, 8.0, 8.0],
+                "storage_shift_savings_cny": [6.0, 6.5, 7.0],
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_paths = plots.make_storage_scale_sensitivity_plots(
+                storage_metrics,
+                Path(temporary_directory),
+            )
+
+            self.assertEqual(
+                [path.name for path in output_paths],
+                [
+                    "storage_scale_total_cost.png",
+                    "storage_scale_shift_value.png",
+                ],
+            )
+            for output_path in output_paths:
+                with Image.open(output_path) as image:
+                    self.assertEqual(image.size, (1800, 900))
+                    self.assertEqual(image.mode, "RGB")
+                    image.verify()
+
     def test_settlement_tail_uses_gray_shading_without_purple_line(
         self,
     ) -> None:

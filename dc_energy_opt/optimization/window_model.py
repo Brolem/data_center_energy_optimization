@@ -13,6 +13,29 @@ from .types import PendingFlexibleTask, WindowSolveState
 
 
 _DEFAULT_TERMINAL_STORED_ENERGY = object()
+_STORAGE_BOUNDARY_TOLERANCE_MWH = 1e-9
+
+
+def _clamp_storage_boundary_energy(
+    value: object,
+    *,
+    name: str,
+    storage_min_mwh: float,
+    storage_max_mwh: float,
+) -> float:
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} 超出储能电量边界。") from error
+    if (
+        not math.isfinite(numeric_value)
+        or numeric_value
+        < storage_min_mwh - _STORAGE_BOUNDARY_TOLERANCE_MWH
+        or numeric_value
+        > storage_max_mwh + _STORAGE_BOUNDARY_TOLERANCE_MWH
+    ):
+        raise ValueError(f"{name} 超出储能电量边界。")
+    return min(max(numeric_value, storage_min_mwh), storage_max_mwh)
 
 
 def _solve_status_is_accepted(
@@ -158,28 +181,26 @@ def build_and_solve(
     if enable_storage:
         storage_min_mwh = params.battery_soc_min * params.battery_energy_mwh
         storage_max_mwh = params.battery_soc_max * params.battery_energy_mwh
-        if (
-            not math.isfinite(initial_stored_energy_mwh)
-            or not storage_min_mwh
-            <= initial_stored_energy_mwh
-            <= storage_max_mwh
-        ):
-            raise ValueError("initial_stored_energy_mwh 超出储能电量边界。")
-        if terminal_stored_energy_mwh is not None and (
-            not isinstance(terminal_stored_energy_mwh, (int, float))
-            or not math.isfinite(float(terminal_stored_energy_mwh))
-            or not storage_min_mwh
-            <= float(terminal_stored_energy_mwh)
-            <= storage_max_mwh
-        ):
-            raise ValueError("terminal_stored_energy_mwh 超出储能电量边界。")
-        if committed_stored_energy_mwh is not None and (
-            not math.isfinite(committed_stored_energy_mwh)
-            or not storage_min_mwh
-            <= committed_stored_energy_mwh
-            <= storage_max_mwh
-        ):
-            raise ValueError("committed_stored_energy_mwh 超出储能电量边界。")
+        initial_stored_energy_mwh = _clamp_storage_boundary_energy(
+            initial_stored_energy_mwh,
+            name="initial_stored_energy_mwh",
+            storage_min_mwh=storage_min_mwh,
+            storage_max_mwh=storage_max_mwh,
+        )
+        if terminal_stored_energy_mwh is not None:
+            terminal_stored_energy_mwh = _clamp_storage_boundary_energy(
+                terminal_stored_energy_mwh,
+                name="terminal_stored_energy_mwh",
+                storage_min_mwh=storage_min_mwh,
+                storage_max_mwh=storage_max_mwh,
+            )
+        if committed_stored_energy_mwh is not None:
+            committed_stored_energy_mwh = _clamp_storage_boundary_energy(
+                committed_stored_energy_mwh,
+                name="committed_stored_energy_mwh",
+                storage_min_mwh=storage_min_mwh,
+                storage_max_mwh=storage_max_mwh,
+            )
 
     solar_input = profiles["solar_available_mw"]
     wind_input = profiles["wind_available_mw"]

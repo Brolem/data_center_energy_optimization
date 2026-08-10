@@ -399,6 +399,40 @@ class CostOptimizationModelTests(unittest.TestCase):
         self.assertAlmostEqual(state.stored_energy_mwh, 0.9)
         self.assertEqual(state.pending_flexible_tasks, ())
 
+    def test_storage_boundary_rounding_at_soc_min_is_clamped(self) -> None:
+        horizon = 6
+        params = replace(
+            self.params,
+            battery_energy_mwh=6.0,
+            battery_charge_power_mw=1.5,
+            battery_discharge_power_mw=1.5,
+        )
+        storage_min_mwh = params.battery_soc_min * params.battery_energy_mwh
+        _, _, state = build_and_solve(
+            cpu_arrival=np.full(horizon, 0.50),
+            solar_available_mw=np.zeros(horizon),
+            wind_available_mw=np.zeros(horizon),
+            electricity_price_cny_per_kwh=np.full(horizon, 0.4489),
+            params=params,
+            enable_shift=False,
+            enable_storage=True,
+            enable_renewables=False,
+            case_name="storage_boundary_rounding",
+            lp_output_dir=self.output_dir,
+            show_log=False,
+            initial_stored_energy_mwh=storage_min_mwh,
+            terminal_stored_energy_mwh=storage_min_mwh,
+            committed_stored_energy_mwh=storage_min_mwh - 5e-16,
+            commit_hours=3,
+            return_state=True,
+        )
+
+        self.assertAlmostEqual(
+            state.stored_energy_mwh,
+            storage_min_mwh,
+            places=12,
+        )
+
     def test_late_flexible_task_is_carried_and_completed_next_day(self) -> None:
         horizon = 27
         cpu_arrival = np.zeros(horizon)

@@ -4,6 +4,10 @@ from .flex_ratio_sensitivity import (
     run_flex_ratio_sensitivity_experiment,
 )
 from .houston_2020 import ExperimentResult, run_houston_2020_experiment
+from .storage_scale_sensitivity import (
+    StorageScaleSensitivityResult,
+    run_storage_scale_sensitivity_experiment,
+)
 
 __all__ = [
     "RunPaths",
@@ -12,4 +16,6 @@ __all__ = [
     "run_flex_ratio_sensitivity_experiment",
     "ExperimentResult",
     "run_houston_2020_experiment",
+    "StorageScaleSensitivityResult",
+    "run_storage_scale_sensitivity_experiment",
 ]
