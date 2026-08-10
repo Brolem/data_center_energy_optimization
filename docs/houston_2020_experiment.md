@@ -68,6 +68,14 @@ conda run -n scip_env python plot_daily_case_costs.py `
 
 四张图的横轴日期从 `hourly_dispatch.csv` 的分析期 `timestamp_lst` 获取，纵轴使用 `daily_metrics.csv` 的 `operating_cost_cny`，并共享同一纵轴范围。第 28 日的 `settlement_tail_operating_cost_cny` 仅作文字标注，不进入柱体。
 
+固定输入和模型参数、只扫描 `flex_ratio` 的成本敏感性分析命令为：
+
+```powershell
+conda run -n scip_env python run_flex_ratio_sensitivity.py
+```
+
+默认扫描 `0.00,0.10,...,1.00`，以 `renewables_only` 对照 `renewables_shift`，以 `renewables_storage` 对照 `joint`。总成本始终包含 672 小时分析期和第 28 日 3 小时结算尾段；结果输出至 `outputs/houston_2020_flex_ratio_sensitivity/`，包含结果 CSV 和总成本、节省率、边际节省三张图。局部加密可使用 `--flex-ratios 0,0.05,0.1,0.15,0.2`。
+
 ## 5. 输出结构
 
 ```text
@@ -102,6 +110,19 @@ outputs/houston_2020_main/
 ├── models/<case>/<window>/
 │   ├── stage_1_cost.lp
 │   └── stage_2_delay.lp
+└── run_metadata.json
+```
+
+敏感性分析输出结构为：
+
+```text
+outputs/houston_2020_flex_ratio_sensitivity/
+├── results/flex_ratio_sensitivity.csv
+├── figures/
+│   ├── flex_ratio_total_cost.png
+│   ├── flex_ratio_cost_savings.png
+│   └── flex_ratio_marginal_savings.png
+├── models/<scenario>/ratio_<percent>/
 └── run_metadata.json
 ```
 

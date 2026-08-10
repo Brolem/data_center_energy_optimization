@@ -52,6 +52,14 @@ conda run -n scip_env python plot_daily_case_costs.py
 
 横轴日期来自 `hourly_dispatch.csv` 的分析期时间戳，纵轴来自 `daily_metrics.csv` 的 `operating_cost_cny`。第 28 日的 3 小时结算尾段成本仅标注在图中，不计入柱体。
 
+固定模型条件下进行时移比例敏感性分析：
+
+```powershell
+conda run -n scip_env python run_flex_ratio_sensitivity.py
+```
+
+默认扫描 `flex_ratio=0.00..1.00`、步长 0.10，分别以 `renewables_only` 和 `renewables_storage` 为零时移基准，输出总成本、节省率、边际节省和三张敏感性图。需要局部加密时，可显式传入逗号分隔的比例，例如 `--flex-ratios 0,0.05,0.1,0.15,0.2`。
+
 ## 测试
 
 ```powershell

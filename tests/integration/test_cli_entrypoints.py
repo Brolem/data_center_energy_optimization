@@ -12,14 +12,91 @@ import run_day_ahead_experiment
 import run_first_version
 import plot_day_ahead_day
 import plot_daily_case_costs
+import run_flex_ratio_sensitivity
 import dc_energy_opt
 from dc_energy_opt.config import Parameters
 from dc_energy_opt.data import load_and_prepare, load_houston_energy_scenario
 from dc_energy_opt.optimization import build_and_solve, run_rolling_day_ahead
 from dc_energy_opt.experiments import ExperimentResult
+from dc_energy_opt.experiments.flex_ratio_sensitivity import (
+    FlexRatioSensitivityResult,
+)
 
 
 class CliEntrypointTests(unittest.TestCase):
+    def test_flex_ratio_sensitivity_command_delegates_and_prints_summary(
+        self,
+    ) -> None:
+        sensitivity_metrics = pd.DataFrame(
+            {
+                "scenario": [
+                    "renewables_shift",
+                    "renewables_shift",
+                    "joint",
+                    "joint",
+                ],
+                "baseline_case": [
+                    "renewables_only",
+                    "renewables_only",
+                    "renewables_storage",
+                    "renewables_storage",
+                ],
+                "flex_ratio": [0.0, 0.1, 0.0, 0.1],
+                "status": ["optimal"] * 4,
+                "operating_cost_cny": [100.0, 95.0, 80.0, 76.0],
+                "baseline_operating_cost_cny": [100.0] * 2 + [80.0] * 2,
+                "cost_savings_pct": [0.0, 5.0, 0.0, 5.0],
+                "marginal_cost_savings_cny_per_flex_ratio": [
+                    float("nan"),
+                    50.0,
+                    float("nan"),
+                    40.0,
+                ],
+                "saturation_onset": [float("nan")] * 4,
+            }
+        )
+        result = FlexRatioSensitivityResult(
+            metrics=sensitivity_metrics,
+            metadata={},
+        )
+        workload_path = Path("sensitivity-workload.csv")
+        energy_path = Path("sensitivity-energy.csv")
+        output_dir = Path("sensitivity-output")
+
+        with (
+            patch(
+                "run_flex_ratio_sensitivity.run_flex_ratio_sensitivity_experiment",
+                return_value=result,
+            ) as run_experiment,
+            patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            run_flex_ratio_sensitivity.main(
+                [
+                    "--workload-data",
+                    str(workload_path),
+                    "--energy-data",
+                    str(energy_path),
+                    "--flex-ratios",
+                    "0,0.1",
+                    "--output-dir",
+                    str(output_dir),
+                ]
+            )
+
+        run_experiment.assert_called_once_with(
+            workload_data=workload_path,
+            energy_data=energy_path,
+            output_dir=output_dir,
+            flex_ratios=(0.0, 0.1),
+            show_solver_log=False,
+        )
+        printed = stdout.getvalue()
+        self.assertIn("renewables_shift", printed)
+        self.assertIn("joint", printed)
+        self.assertIn("baseline", printed)
+        self.assertIn("saturation", printed)
+        self.assertNotIn(str(output_dir), printed)
+
     def test_daily_case_cost_command_reads_existing_csv_and_delegates(
         self,
     ) -> None:

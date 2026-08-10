@@ -314,6 +314,84 @@ class PlotTests(unittest.TestCase):
                 )
                 self.assertEqual(image.getpixel((160, 720)), (255, 255, 255))
 
+    def test_flex_ratio_sensitivity_plots_write_three_images(self) -> None:
+        sensitivity_metrics = pd.DataFrame(
+            {
+                "scenario": [
+                    "renewables_shift",
+                    "renewables_shift",
+                    "renewables_shift",
+                    "joint",
+                    "joint",
+                    "joint",
+                ],
+                "baseline_case": [
+                    "renewables_only",
+                    "renewables_only",
+                    "renewables_only",
+                    "renewables_storage",
+                    "renewables_storage",
+                    "renewables_storage",
+                ],
+                "flex_ratio": [0.0, 0.5, 1.0, 0.0, 0.5, 1.0],
+                "status": ["optimal"] * 6,
+                "analysis_operating_cost_cny": [90.0, 85.0, 80.0, 72.0, 68.0, 64.0],
+                "settlement_tail_operating_cost_cny": [10.0, 9.0, 8.0, 8.0, 7.0, 6.0],
+                "operating_cost_cny": [100.0, 94.0, 88.0, 80.0, 75.0, 70.0],
+                "baseline_operating_cost_cny": [100.0] * 3 + [80.0] * 3,
+                "cost_savings_cny": [0.0, 6.0, 12.0, 0.0, 5.0, 10.0],
+                "cost_savings_pct": [0.0, 6.0, 12.0, 0.0, 6.25, 12.5],
+                "marginal_cost_savings_cny_per_flex_ratio": [
+                    np.nan,
+                    60.0,
+                    60.0,
+                    np.nan,
+                    50.0,
+                    50.0,
+                ],
+                "total_task_delay_cpu_hours": [0.0, 3.0, 6.0, 0.0, 2.0, 4.0],
+                "average_flexible_task_delay_h": [0.0, 1.0, 1.5, 0.0, 0.8, 1.2],
+                "maximum_task_delay_h": [0, 3, 3, 0, 2, 3],
+                "saturation_onset": [np.nan] * 6,
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory) / "figures"
+            output_paths = plots.make_flex_ratio_sensitivity_plots(
+                sensitivity_metrics,
+                output_dir,
+            )
+
+            self.assertEqual(
+                [path.name for path in output_paths],
+                [
+                    "flex_ratio_total_cost.png",
+                    "flex_ratio_cost_savings.png",
+                    "flex_ratio_marginal_savings.png",
+                ],
+            )
+            for output_path in output_paths:
+                with Image.open(output_path) as image:
+                    self.assertEqual(image.size, (1800, 900))
+                    self.assertEqual(image.mode, "RGB")
+                    image.verify()
+
+            with Image.open(output_paths[2]) as marginal_image:
+                self.assertEqual(
+                    marginal_image.getpixel((1780, 500)),
+                    ImageColor.getrgb(plots.PANEL),
+                )
+
+            accepted_gaplimit_metrics = sensitivity_metrics.copy()
+            accepted_gaplimit_metrics["status"] = "gaplimit"
+            with tempfile.TemporaryDirectory() as gaplimit_directory:
+                gaplimit_paths = plots.make_flex_ratio_sensitivity_plots(
+                    accepted_gaplimit_metrics,
+                    Path(gaplimit_directory),
+                )
+                self.assertEqual(len(gaplimit_paths), 3)
+
     def test_settlement_tail_uses_gray_shading_without_purple_line(
         self,
     ) -> None:

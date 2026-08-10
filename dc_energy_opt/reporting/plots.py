@@ -1532,6 +1532,516 @@ def make_daily_case_cost_plots(
     return output_paths
 
 
+FLEX_RATIO_SCENARIOS = ("renewables_shift", "joint")
+FLEX_RATIO_SENSITIVITY_COLUMNS = (
+    "scenario",
+    "baseline_case",
+    "flex_ratio",
+    "status",
+    "analysis_operating_cost_cny",
+    "settlement_tail_operating_cost_cny",
+    "operating_cost_cny",
+    "baseline_operating_cost_cny",
+    "cost_savings_cny",
+    "cost_savings_pct",
+    "marginal_cost_savings_cny_per_flex_ratio",
+    "total_task_delay_cpu_hours",
+    "average_flexible_task_delay_h",
+    "maximum_task_delay_h",
+    "saturation_onset",
+)
+FLEX_RATIO_PLOT_FILENAMES = (
+    "flex_ratio_total_cost.png",
+    "flex_ratio_cost_savings.png",
+    "flex_ratio_marginal_savings.png",
+)
+
+
+def _prepare_flex_ratio_sensitivity_inputs(
+    sensitivity_metrics: pd.DataFrame,
+) -> tuple[dict[str, pd.DataFrame], tuple[float, ...]]:
+    missing_columns = [
+        column
+        for column in FLEX_RATIO_SENSITIVITY_COLUMNS
+        if column not in sensitivity_metrics.columns
+    ]
+    if missing_columns:
+        raise ValueError(
+            "sensitivity_metrics missing required columns: "
+            f"{', '.join(missing_columns)}"
+        )
+    numeric_columns = (
+        "flex_ratio",
+        "analysis_operating_cost_cny",
+        "settlement_tail_operating_cost_cny",
+        "operating_cost_cny",
+        "baseline_operating_cost_cny",
+        "cost_savings_cny",
+        "cost_savings_pct",
+        "total_task_delay_cpu_hours",
+        "average_flexible_task_delay_h",
+        "maximum_task_delay_h",
+    )
+    for column in numeric_columns:
+        if not pd.api.types.is_numeric_dtype(sensitivity_metrics[column]):
+            raise ValueError(
+                f"sensitivity_metrics numeric column {column} must be numeric"
+            )
+        values = sensitivity_metrics[column].to_numpy(dtype=float)
+        if not np.isfinite(values).all():
+            raise ValueError(
+                f"sensitivity_metrics numeric column {column} contains "
+                "non-finite values"
+            )
+    if not pd.api.types.is_numeric_dtype(
+        sensitivity_metrics["marginal_cost_savings_cny_per_flex_ratio"]
+    ):
+        raise ValueError(
+            "sensitivity_metrics numeric column "
+            "marginal_cost_savings_cny_per_flex_ratio must be numeric"
+        )
+    if not pd.api.types.is_numeric_dtype(sensitivity_metrics["saturation_onset"]):
+        raise ValueError(
+            "sensitivity_metrics numeric column saturation_onset must be numeric"
+        )
+
+    actual_scenarios = sensitivity_metrics["scenario"].drop_duplicates().tolist()
+    if set(actual_scenarios) != set(FLEX_RATIO_SCENARIOS):
+        raise ValueError(
+            "sensitivity_metrics scenario set invalid: "
+            f"found={actual_scenarios}"
+        )
+    rows_by_scenario: dict[str, pd.DataFrame] = {}
+    expected_ratios: tuple[float, ...] | None = None
+    for scenario in FLEX_RATIO_SCENARIOS:
+        rows = (
+            sensitivity_metrics.loc[
+                sensitivity_metrics["scenario"] == scenario
+            ]
+            .sort_values("flex_ratio")
+            .reset_index(drop=True)
+        )
+        if rows.empty or not rows["flex_ratio"].is_unique:
+            raise ValueError(
+                f"sensitivity_metrics scenario {scenario} flex_ratio invalid"
+            )
+        ratios = tuple(rows["flex_ratio"].to_numpy(dtype=float).tolist())
+        if ratios[0] != 0.0 or any(
+            not 0.0 <= ratio <= 1.0 for ratio in ratios
+        ):
+            raise ValueError(
+                f"sensitivity_metrics scenario {scenario} flex_ratio invalid"
+            )
+        if tuple(sorted(ratios)) != ratios:
+            raise ValueError(
+                f"sensitivity_metrics scenario {scenario} flex_ratio invalid"
+            )
+        if expected_ratios is None:
+            expected_ratios = ratios
+        elif ratios != expected_ratios:
+            raise ValueError(
+                "sensitivity_metrics scenarios must contain identical flex_ratio values"
+            )
+        if not rows["status"].isin(("optimal", "gaplimit")).all():
+            raise ValueError(
+                f"sensitivity_metrics scenario {scenario} contains unaccepted status"
+            )
+        expected_cost = (
+            rows["analysis_operating_cost_cny"]
+            + rows["settlement_tail_operating_cost_cny"]
+        )
+        if not np.isclose(
+            rows["operating_cost_cny"].to_numpy(dtype=float),
+            expected_cost.to_numpy(dtype=float),
+            rtol=0.0,
+            atol=1e-7,
+        ).all():
+            raise ValueError(
+                "sensitivity_metrics operating cost identity invalid"
+            )
+        marginal = rows["marginal_cost_savings_cny_per_flex_ratio"]
+        if not pd.isna(marginal.iloc[0]) or marginal.iloc[1:].isna().any():
+            raise ValueError(
+                "sensitivity_metrics marginal savings values invalid"
+            )
+        onset = rows["saturation_onset"].dropna().to_numpy(dtype=float)
+        if len(onset) and (
+            not np.isfinite(onset).all()
+            or len(np.unique(onset)) != 1
+            or float(onset[0]) not in ratios
+        ):
+            raise ValueError(
+                "sensitivity_metrics saturation_onset values invalid"
+            )
+        rows_by_scenario[scenario] = rows
+
+    assert expected_ratios is not None
+    return rows_by_scenario, expected_ratios
+
+
+def _flex_ratio_y_bounds(
+    values: np.ndarray,
+    *,
+    include_zero: bool,
+) -> tuple[float, float]:
+    finite_values = values[np.isfinite(values)]
+    if len(finite_values) == 0:
+        return -1.0, 1.0
+    minimum = float(np.min(finite_values))
+    maximum = float(np.max(finite_values))
+    if include_zero:
+        minimum = min(minimum, 0.0)
+        maximum = max(maximum, 0.0)
+    padding = max((maximum - minimum) * 0.10, abs(maximum) * 0.03, 1.0)
+    return minimum - padding, maximum + padding
+
+
+def _draw_flex_ratio_axes(
+    draw: ImageDraw.ImageDraw,
+    plot: tuple[int, int, int, int],
+    *,
+    y_min: float,
+    y_max: float,
+    panel_title: str,
+    y_label: str,
+) -> None:
+    plot_left, plot_top, plot_right, plot_bottom = plot
+    draw.text(
+        (plot_left, plot_top - 35),
+        panel_title,
+        font=_font(16, bold=True),
+        fill=TEXT,
+    )
+    draw.rectangle(plot, outline=MUTED, width=1)
+    for index in range(6):
+        fraction = index / 5.0
+        y = round(plot_bottom - fraction * (plot_bottom - plot_top))
+        value = y_min + fraction * (y_max - y_min)
+        draw.line((plot_left, y, plot_right, y), fill=GRID, width=1)
+        label = _tick_label(value)
+        label_width = draw.textlength(label, font=_font(13))
+        draw.text(
+            (plot_left - label_width - 10, y - 8),
+            label,
+            font=_font(13),
+            fill=MUTED,
+        )
+    for percentage in (0, 20, 40, 60, 80, 100):
+        x = round(
+            plot_left + percentage / 100.0 * (plot_right - plot_left)
+        )
+        draw.line((x, plot_bottom, x, plot_bottom + 5), fill=MUTED, width=1)
+        label = f"{percentage}%"
+        label_width = draw.textlength(label, font=_font(13))
+        draw.text(
+            (x - label_width / 2, plot_bottom + 10),
+            label,
+            font=_font(13),
+            fill=MUTED,
+        )
+    _draw_vertical_text(
+        draw._image,
+        y_label,
+        plot_left - 138,
+        (plot_top + plot_bottom) // 2,
+    )
+
+
+def _flex_ratio_coordinates(
+    ratios: tuple[float, ...],
+    values: np.ndarray,
+    plot: tuple[int, int, int, int],
+    y_min: float,
+    y_max: float,
+) -> list[tuple[int, int]]:
+    plot_left, plot_top, plot_right, plot_bottom = plot
+    height = plot_bottom - plot_top
+    return [
+        (
+            round(plot_left + ratio * (plot_right - plot_left)),
+            round(
+                plot_bottom
+                - (value - y_min) / (y_max - y_min) * height
+            ),
+        )
+        for ratio, value in zip(ratios, values, strict=True)
+    ]
+
+
+def _draw_flex_ratio_line(
+    draw: ImageDraw.ImageDraw,
+    ratios: tuple[float, ...],
+    values: np.ndarray,
+    plot: tuple[int, int, int, int],
+    y_min: float,
+    y_max: float,
+    color: str,
+) -> None:
+    points = _flex_ratio_coordinates(
+        ratios,
+        values,
+        plot,
+        y_min,
+        y_max,
+    )
+    if len(points) > 1:
+        draw.line(points, fill=color, width=4, joint="curve")
+    for x, y in points:
+        draw.ellipse((x - 5, y - 5, x + 5, y + 5), fill=color)
+
+
+def _draw_flex_ratio_zero_line(
+    draw: ImageDraw.ImageDraw,
+    plot: tuple[int, int, int, int],
+    y_min: float,
+    y_max: float,
+) -> None:
+    if not y_min <= 0.0 <= y_max:
+        return
+    _, plot_top, _, plot_bottom = plot
+    y = round(
+        plot_bottom - (0.0 - y_min) / (y_max - y_min) * (plot_bottom - plot_top)
+    )
+    draw.line((plot[0], y, plot[2], y), fill=TEXT, width=2)
+
+
+def _draw_flex_ratio_saturation_mark(
+    draw: ImageDraw.ImageDraw,
+    rows_by_scenario: dict[str, pd.DataFrame],
+    plot: tuple[int, int, int, int],
+) -> None:
+    plot_left, plot_top, plot_right, plot_bottom = plot
+    for scenario in FLEX_RATIO_SCENARIOS:
+        onset = rows_by_scenario[scenario]["saturation_onset"].dropna()
+        if onset.empty:
+            continue
+        x = round(
+            plot_left
+            + float(onset.iloc[0]) * (plot_right - plot_left)
+        )
+        _draw_dashed_line(
+            draw,
+            [(x, plot_top), (x, plot_bottom)],
+            CASE_COLORS[scenario],
+            width=2,
+        )
+
+
+def _draw_flex_ratio_total_cost_plot(
+    rows_by_scenario: dict[str, pd.DataFrame],
+    ratios: tuple[float, ...],
+    output_path: Path,
+) -> None:
+    values = np.concatenate(
+        [
+            rows_by_scenario[scenario]["operating_cost_cny"].to_numpy(
+                dtype=float
+            )
+            for scenario in FLEX_RATIO_SCENARIOS
+        ]
+    )
+    y_min, y_max = _flex_ratio_y_bounds(values, include_zero=False)
+    image = Image.new("RGB", (1800, 900), BACKGROUND)
+    draw = ImageDraw.Draw(image)
+    _draw_header(draw, "Flex-ratio Sensitivity: Total Operating Cost")
+    panel_bounds = ((18, 105, 1782, 485), (18, 510, 1782, 890))
+    for bounds, scenario in zip(
+        panel_bounds,
+        FLEX_RATIO_SCENARIOS,
+        strict=True,
+    ):
+        draw.rounded_rectangle(bounds, radius=12, fill=PANEL, outline=GRID)
+        plot = (175, bounds[1] + 72, 1745, bounds[3] - 58)
+        _draw_flex_ratio_axes(
+            draw,
+            plot,
+            y_min=y_min,
+            y_max=y_max,
+            panel_title=CASE_LABELS[scenario],
+            y_label="Operating cost (CNY)",
+        )
+        _draw_flex_ratio_line(
+            draw,
+            ratios,
+            rows_by_scenario[scenario]["operating_cost_cny"].to_numpy(
+                dtype=float
+            ),
+            plot,
+            y_min,
+            y_max,
+            CASE_COLORS[scenario],
+        )
+    image.save(output_path)
+
+
+def _draw_flex_ratio_cost_savings_plot(
+    rows_by_scenario: dict[str, pd.DataFrame],
+    ratios: tuple[float, ...],
+    output_path: Path,
+) -> None:
+    values = np.concatenate(
+        [
+            rows_by_scenario[scenario]["cost_savings_pct"].to_numpy(
+                dtype=float
+            )
+            for scenario in FLEX_RATIO_SCENARIOS
+        ]
+    )
+    y_min, y_max = _flex_ratio_y_bounds(values, include_zero=True)
+    image = Image.new("RGB", (1800, 900), BACKGROUND)
+    draw = ImageDraw.Draw(image)
+    _draw_header(draw, "Flex-ratio Sensitivity: Cost Savings")
+    panel = (18, 105, 1782, 890)
+    draw.rounded_rectangle(panel, radius=12, fill=PANEL, outline=GRID)
+    plot = (175, 205, 1745, 735)
+    _draw_flex_ratio_axes(
+        draw,
+        plot,
+        y_min=y_min,
+        y_max=y_max,
+        panel_title="Savings versus each zero-shift baseline",
+        y_label="Cost savings (%)",
+    )
+    _draw_flex_ratio_zero_line(draw, plot, y_min, y_max)
+    for scenario in FLEX_RATIO_SCENARIOS:
+        _draw_flex_ratio_line(
+            draw,
+            ratios,
+            rows_by_scenario[scenario]["cost_savings_pct"].to_numpy(
+                dtype=float
+            ),
+            plot,
+            y_min,
+            y_max,
+            CASE_COLORS[scenario],
+        )
+    _draw_flex_ratio_saturation_mark(draw, rows_by_scenario, plot)
+    _draw_legend(
+        draw,
+        230,
+        146,
+        [
+            (CASE_LABELS[scenario], CASE_COLORS[scenario])
+            for scenario in FLEX_RATIO_SCENARIOS
+        ],
+        max_x=1715,
+    )
+    image.save(output_path)
+
+
+def _draw_flex_ratio_marginal_savings_plot(
+    rows_by_scenario: dict[str, pd.DataFrame],
+    ratios: tuple[float, ...],
+    output_path: Path,
+) -> None:
+    marginal_values = np.concatenate(
+        [
+            rows_by_scenario[scenario][
+                "marginal_cost_savings_cny_per_flex_ratio"
+            ].to_numpy(dtype=float)[1:]
+            for scenario in FLEX_RATIO_SCENARIOS
+        ]
+    )
+    y_min, y_max = _flex_ratio_y_bounds(marginal_values, include_zero=True)
+    image = Image.new("RGB", (1800, 900), BACKGROUND)
+    draw = ImageDraw.Draw(image)
+    _draw_header(draw, "Flex-ratio Sensitivity: Marginal Cost Savings")
+    panel = (18, 105, 1782, 890)
+    draw.rounded_rectangle(panel, radius=12, fill=PANEL, outline=GRID)
+    plot = (175, 205, 1745, 735)
+    _draw_flex_ratio_axes(
+        draw,
+        plot,
+        y_min=y_min,
+        y_max=y_max,
+        panel_title="Savings per unit increase in flex ratio",
+        y_label="Marginal savings (CNY)",
+    )
+    _draw_flex_ratio_zero_line(draw, plot, y_min, y_max)
+    plot_left, plot_top, plot_right, plot_bottom = plot
+    baseline_y = round(
+        plot_bottom
+        - (0.0 - y_min) / (y_max - y_min) * (plot_bottom - plot_top)
+    )
+    positive_ratios = ratios[1:]
+    slot_width = (plot_right - plot_left) / max(len(positive_ratios), 1)
+    bar_width = max(8, min(30, round(slot_width * 0.28)))
+    bar_gap = 8
+    group_width = 2 * bar_width + bar_gap
+    for ratio_index, ratio in enumerate(positive_ratios):
+        center = round(
+            plot_left
+            + group_width / 2
+            + ratio * (plot_right - plot_left - group_width)
+        )
+        for scenario_index, scenario in enumerate(FLEX_RATIO_SCENARIOS):
+            value = float(
+                rows_by_scenario[scenario].iloc[ratio_index + 1][
+                    "marginal_cost_savings_cny_per_flex_ratio"
+                ]
+            )
+            value_y = round(
+                plot_bottom
+                - (value - y_min) / (y_max - y_min) * (plot_bottom - plot_top)
+            )
+            left = (
+                center - bar_width - bar_gap // 2
+                if scenario_index == 0
+                else center + bar_gap // 2
+            )
+            draw.rectangle(
+                (
+                    left,
+                    min(value_y, baseline_y),
+                    left + bar_width,
+                    max(value_y, baseline_y),
+                ),
+                fill=CASE_COLORS[scenario],
+            )
+    _draw_flex_ratio_saturation_mark(draw, rows_by_scenario, plot)
+    _draw_legend(
+        draw,
+        230,
+        146,
+        [
+            (CASE_LABELS[scenario], CASE_COLORS[scenario])
+            for scenario in FLEX_RATIO_SCENARIOS
+        ],
+        max_x=1715,
+    )
+    image.save(output_path)
+
+
+def make_flex_ratio_sensitivity_plots(
+    sensitivity_metrics: pd.DataFrame,
+    output_dir: Path,
+) -> list[Path]:
+    rows_by_scenario, ratios = _prepare_flex_ratio_sensitivity_inputs(
+        sensitivity_metrics
+    )
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_paths = [
+        output_dir / filename for filename in FLEX_RATIO_PLOT_FILENAMES
+    ]
+    _draw_flex_ratio_total_cost_plot(
+        rows_by_scenario,
+        ratios,
+        output_paths[0],
+    )
+    _draw_flex_ratio_cost_savings_plot(
+        rows_by_scenario,
+        ratios,
+        output_paths[1],
+    )
+    _draw_flex_ratio_marginal_savings_plot(
+        rows_by_scenario,
+        ratios,
+        output_paths[2],
+    )
+    return output_paths
+
+
 def _validated_task_delay_rows(
     daily_metrics: pd.DataFrame,
     day_number: int | None,
