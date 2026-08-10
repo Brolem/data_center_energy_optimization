@@ -34,7 +34,7 @@ conda run -n scip_env python run_day_ahead_experiment.py
 
 ## 输出目录
 
-默认输出位于 `outputs/houston_2020_main/`，包含输入快照、结果表、六张图、按算例和窗口分层的 LP 模型，以及 `run_metadata.json`。其中 `task_delay_objectives.png` 对比两个任务转移算例每天的一级、二级加权延迟。发布采用同级临时目录整体替换；失败时保留上一次完整结果。
+默认输出位于 `outputs/houston_2020_main/`，包含输入快照、结果表、十张图、按算例和窗口分层的 LP 模型，以及 `run_metadata.json`。其中 `task_delay_objectives.png` 对比两个任务转移算例每天的一级、二级加权延迟；四张 `daily_cost_<case>.png` 分别展示四个正式算例的每日 24 小时运行成本，并使用相同纵轴范围。发布采用同级临时目录整体替换；失败时保留上一次完整结果。
 
 已有完整实验结果时，可直接生成指定日期的六张图，无需重新求解：
 
@@ -43,6 +43,14 @@ conda run -n scip_env python plot_day_ahead_day.py --day 28
 ```
 
 命令同时读取同一结果目录中的 `daily_metrics.csv`。结果写入 `figures/day_XX/`；`task_delay_objectives.png` 用上下双面板展示 `renewables_shift` 与 `joint` 当天的一级、二级加权延迟。第 1～27 天绘制 24 小时；第 28 天绘制 24 小时分析期和 3 小时浅灰背景标识的结算尾段。终端首先打印纯电网核算成本、纯电网所需峰值和风光成本贡献，随后打印四个正式算例的成本摘要；不打印图片目录。
+
+已有完整实验结果时，也可直接生成四个算例各自的每日成本折线图：
+
+```powershell
+conda run -n scip_env python plot_daily_case_costs.py
+```
+
+横轴日期来自 `hourly_dispatch.csv` 的分析期时间戳，纵轴来自 `daily_metrics.csv` 的 `operating_cost_cny`。第 28 日的 3 小时结算尾段成本仅标注在图中，不计入折线。
 
 ## 测试
 

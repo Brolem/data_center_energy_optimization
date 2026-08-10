@@ -11,6 +11,7 @@ import pandas as pd
 import run_day_ahead_experiment
 import run_first_version
 import plot_day_ahead_day
+import plot_daily_case_costs
 import dc_energy_opt
 from dc_energy_opt.config import Parameters
 from dc_energy_opt.data import load_and_prepare, load_houston_energy_scenario
@@ -19,6 +20,52 @@ from dc_energy_opt.experiments import ExperimentResult
 
 
 class CliEntrypointTests(unittest.TestCase):
+    def test_daily_case_cost_command_reads_existing_csv_and_delegates(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            daily_metrics_path = root / "daily_metrics.csv"
+            hourly_dispatch_path = root / "hourly_dispatch.csv"
+            pd.DataFrame(
+                {
+                    "case": ["renewables_only"],
+                    "day": [1],
+                    "operating_cost_cny": [100.0],
+                    "settlement_tail_operating_cost_cny": [0.0],
+                }
+            ).to_csv(daily_metrics_path, index=False)
+            pd.DataFrame(
+                {
+                    "case": ["renewables_only"],
+                    "day": [1],
+                    "timestamp_lst": ["2020-05-01 00:00:00"],
+                    "period_role": ["analysis"],
+                }
+            ).to_csv(hourly_dispatch_path, index=False)
+            output_dir = root / "figures"
+
+            with patch(
+                "plot_daily_case_costs.make_daily_case_cost_plots"
+            ) as make_cost_plots:
+                plot_daily_case_costs.main(
+                    [
+                        "--daily-metrics",
+                        str(daily_metrics_path),
+                        "--hourly-dispatch",
+                        str(hourly_dispatch_path),
+                        "--output-dir",
+                        str(output_dir),
+                    ]
+                )
+
+            actual_daily, actual_hourly, actual_output = (
+                make_cost_plots.call_args.args
+            )
+            self.assertEqual(len(actual_daily), 1)
+            self.assertEqual(len(actual_hourly), 1)
+            self.assertEqual(actual_output, output_dir)
+
     def test_daily_plot_command_reads_existing_csv_and_delegates(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

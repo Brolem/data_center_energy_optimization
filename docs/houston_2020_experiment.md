@@ -57,6 +57,17 @@ conda run -n scip_env python plot_day_ahead_day.py `
 
 `--day` 必须位于 `1..28`。第 1～27 天输出 24 小时；第 28 天输出 24 小时分析期和 3 小时结算尾段，尾段使用浅灰背景标识，其成本包含在第 28 天成本分解图中。
 
+已有同一实验的两个结果 CSV 时，可直接生成四个正式算例各自的每日成本折线图，无需重新求解：
+
+```powershell
+conda run -n scip_env python plot_daily_case_costs.py `
+  --daily-metrics outputs/houston_2020_main/results/daily_metrics.csv `
+  --hourly-dispatch outputs/houston_2020_main/results/hourly_dispatch.csv `
+  --output-dir outputs/houston_2020_main/figures
+```
+
+四张图的横轴日期从 `hourly_dispatch.csv` 的分析期 `timestamp_lst` 获取，纵轴使用 `daily_metrics.csv` 的 `operating_cost_cny`，并共享同一纵轴范围。第 28 日的 `settlement_tail_operating_cost_cny` 仅作文字标注，不进入折线。
+
 ## 5. 输出结构
 
 ```text
@@ -77,6 +88,10 @@ outputs/houston_2020_main/
 │   ├── renewable_dispatch.png
 │   ├── cost_breakdown.png
 │   ├── task_delay_objectives.png
+│   ├── daily_cost_renewables_only.png
+│   ├── daily_cost_renewables_shift.png
+│   ├── daily_cost_renewables_storage.png
+│   ├── daily_cost_joint.png
 │   └── day_XX/
 │       ├── power_dispatch.png
 │       ├── compute_schedule.png
@@ -90,7 +105,7 @@ outputs/houston_2020_main/
 └── run_metadata.json
 ```
 
-默认完整运行生成 2,700 行 `hourly_dispatch.csv`、112 行 `daily_metrics.csv`、4 行 `case_metrics.csv`、232 个 LP 文件和 6 张 PNG。四个算例各含 672 小时分析期与 3 小时结算尾段。
+默认完整运行生成 2,700 行 `hourly_dispatch.csv`、112 行 `daily_metrics.csv`、4 行 `case_metrics.csv`、232 个 LP 文件和 10 张 PNG。四个算例各含 672 小时分析期与 3 小时结算尾段。
 
 ## 6. 结果字段
 

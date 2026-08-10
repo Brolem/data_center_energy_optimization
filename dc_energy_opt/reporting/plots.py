@@ -45,6 +45,10 @@ PLOT_FILENAMES = [
 ]
 TASK_DELAY_PLOT_FILENAME = "task_delay_objectives.png"
 TASK_DELAY_CASES = ("renewables_shift", "joint")
+DAILY_COST_PLOT_FILENAMES = {
+    case_name: f"daily_cost_{case_name}.png"
+    for case_name in CASE_ORDER
+}
 HOURLY_NUMERIC_COLUMNS = [
     "hour",
     "cpu_arrival_pu",
@@ -1209,6 +1213,307 @@ def _draw_cost_comparison(
             fill=MUTED,
         )
     image.save(output_path)
+
+
+def _prepare_daily_case_cost_inputs(
+    daily_metrics: pd.DataFrame,
+    hourly_dispatch: pd.DataFrame,
+) -> tuple[dict[str, pd.DataFrame], tuple[pd.Timestamp, ...], float, float]:
+    daily_required = [
+        "case",
+        "day",
+        "operating_cost_cny",
+        "settlement_tail_operating_cost_cny",
+    ]
+    hourly_required = ["case", "day", "timestamp_lst", "period_role"]
+    for dataframe_name, dataframe, required in (
+        ("daily_metrics", daily_metrics, daily_required),
+        ("hourly_dispatch", hourly_dispatch, hourly_required),
+    ):
+        missing = [
+            column for column in required if column not in dataframe.columns
+        ]
+        if missing:
+            raise ValueError(
+                f"{dataframe_name} missing required columns: "
+                f"{', '.join(missing)}"
+            )
+
+    for column in (
+        "day",
+        "operating_cost_cny",
+        "settlement_tail_operating_cost_cny",
+    ):
+        if not pd.api.types.is_numeric_dtype(daily_metrics[column]):
+            raise ValueError(
+                f"daily_metrics numeric column {column} must be numeric"
+            )
+        values = daily_metrics[column].to_numpy(dtype=float)
+        if not np.isfinite(values).all():
+            raise ValueError(
+                f"daily_metrics numeric column {column} contains "
+                "non-finite values"
+            )
+    daily_days = daily_metrics["day"].to_numpy(dtype=float)
+    if not np.equal(daily_days, np.round(daily_days)).all():
+        raise ValueError("daily_metrics day values must be integers")
+    for column in (
+        "operating_cost_cny",
+        "settlement_tail_operating_cost_cny",
+    ):
+        if (
+            daily_metrics[column].to_numpy(dtype=float)
+            < -NONNEGATIVE_TOLERANCE
+        ).any():
+            raise ValueError(
+                f"daily_metrics cost column {column} contains values below "
+                f"-{NONNEGATIVE_TOLERANCE}"
+            )
+
+    rows_by_case: dict[str, pd.DataFrame] = {}
+    expected_days: tuple[int, ...] | None = None
+    all_costs: list[float] = []
+    for case_name in CASE_ORDER:
+        rows = (
+            daily_metrics.loc[daily_metrics["case"] == case_name]
+            .sort_values("day")
+            .reset_index(drop=True)
+        )
+        if rows.empty:
+            raise ValueError(f"daily_metrics missing {case_name}")
+        if not rows["day"].is_unique:
+            raise ValueError(
+                f"daily_metrics case {case_name} day values must be unique"
+            )
+        case_days = tuple(rows["day"].astype(int).tolist())
+        if expected_days is None:
+            expected_days = case_days
+        elif case_days != expected_days:
+            raise ValueError(
+                "daily_metrics cases must contain identical day values"
+            )
+        rows_by_case[case_name] = rows
+        all_costs.extend(rows["operating_cost_cny"].to_numpy(dtype=float))
+
+    assert expected_days is not None
+    baseline_analysis = hourly_dispatch.loc[
+        (hourly_dispatch["case"] == "renewables_only")
+        & (hourly_dispatch["period_role"] == "analysis")
+    ].copy()
+    if baseline_analysis.empty:
+        raise ValueError(
+            "hourly_dispatch missing renewables_only analysis rows"
+        )
+    if not pd.api.types.is_numeric_dtype(baseline_analysis["day"]):
+        raise ValueError("hourly_dispatch numeric column day must be numeric")
+    baseline_day_values = baseline_analysis["day"].to_numpy(dtype=float)
+    if (
+        not np.isfinite(baseline_day_values).all()
+        or not np.equal(baseline_day_values, np.round(baseline_day_values)).all()
+    ):
+        raise ValueError("hourly_dispatch day values must be finite integers")
+    timestamps = pd.to_datetime(
+        baseline_analysis["timestamp_lst"],
+        errors="coerce",
+    )
+    if timestamps.isna().any():
+        raise ValueError("hourly_dispatch timestamp_lst contains invalid values")
+    baseline_analysis["date"] = timestamps.dt.normalize()
+    date_counts = baseline_analysis.groupby("day")["date"].nunique()
+    if not date_counts.eq(1).all():
+        raise ValueError(
+            "hourly_dispatch analysis rows must map each day to one date"
+        )
+    date_by_day = (
+        baseline_analysis.groupby("day", sort=True)["date"].first().to_dict()
+    )
+    missing_dates = [day for day in expected_days if day not in date_by_day]
+    if missing_dates:
+        raise ValueError(
+            "hourly_dispatch missing analysis dates for days: "
+            f"{missing_dates}"
+        )
+    dates = tuple(pd.Timestamp(date_by_day[day]) for day in expected_days)
+
+    minimum_cost = float(min(all_costs))
+    maximum_cost = float(max(all_costs))
+    padding = max(
+        (maximum_cost - minimum_cost) * 0.10,
+        maximum_cost * 0.03,
+        1.0,
+    )
+    y_min = max(0.0, minimum_cost - padding)
+    y_max = maximum_cost + padding
+    return rows_by_case, dates, y_min, y_max
+
+
+def _draw_daily_case_cost_plot(
+    rows: pd.DataFrame,
+    dates: tuple[pd.Timestamp, ...],
+    case_name: str,
+    y_min: float,
+    y_max: float,
+    output_path: Path,
+) -> None:
+    costs = rows["operating_cost_cny"].to_numpy(dtype=float)
+    x_values = np.arange(len(costs), dtype=float)
+    image = Image.new("RGB", (1800, 900), BACKGROUND)
+    draw = ImageDraw.Draw(image)
+    _draw_header(draw, f"Daily Operating Cost: {CASE_LABELS[case_name]}")
+
+    panel = (18, 100, 1782, 890)
+    draw.rounded_rectangle(panel, radius=12, fill=PANEL, outline=GRID)
+    draw.text(
+        (38, 116),
+        "24-hour analysis cost | common vertical scale across all cases",
+        font=_font(20, bold=True),
+        fill=TEXT,
+    )
+    tail_rows = rows.loc[
+        rows["settlement_tail_operating_cost_cny"] > NONNEGATIVE_TOLERANCE
+    ]
+    if not tail_rows.empty:
+        tail_row = tail_rows.iloc[-1]
+        tail_day = int(tail_row["day"])
+        tail_index = rows.index[rows["day"].astype(int) == tail_day][0]
+        tail_date = dates[int(tail_index)].strftime("%Y-%m-%d")
+        tail_cost = float(tail_row["settlement_tail_operating_cost_cny"])
+        tail_label = (
+            f"3 h settlement tail after {tail_date}: "
+            f"CNY {tail_cost:,.2f} (excluded from line)"
+        )
+        tail_width = draw.textlength(tail_label, font=_font(15))
+        draw.text(
+            (1740 - tail_width, 122),
+            tail_label,
+            font=_font(15),
+            fill=MUTED,
+        )
+
+    plot = (175, 205, 1745, 735)
+    plot_left, plot_top, plot_right, plot_bottom = plot
+    draw.rectangle(plot, outline=MUTED, width=1)
+    for index in range(6):
+        fraction = index / 5.0
+        y = round(plot_bottom - fraction * (plot_bottom - plot_top))
+        value = y_min + fraction * (y_max - y_min)
+        draw.line((plot_left, y, plot_right, y), fill=GRID, width=1)
+        label = _tick_label(value)
+        label_width = draw.textlength(label, font=_font(14))
+        draw.text(
+            (plot_left - label_width - 12, y - 9),
+            label,
+            font=_font(14),
+            fill=MUTED,
+        )
+    _draw_vertical_text(
+        image,
+        "Operating cost (CNY per 24 h)",
+        35,
+        (plot_top + plot_bottom) // 2,
+    )
+
+    tick_indices = sorted(
+        set(
+            np.linspace(0, len(dates) - 1, min(5, len(dates)))
+            .round()
+            .astype(int)
+            .tolist()
+        )
+    )
+    x_max = max(float(len(costs) - 1), 1.0)
+    for index in tick_indices:
+        x = round(plot_left + index / x_max * (plot_right - plot_left))
+        draw.line((x, plot_bottom, x, plot_bottom + 5), fill=MUTED, width=1)
+        label = dates[index].strftime("%Y-%m-%d")
+        label_width = draw.textlength(label, font=_font(13))
+        draw.text(
+            (x - label_width / 2, plot_bottom + 11),
+            label,
+            font=_font(13),
+            fill=MUTED,
+        )
+    date_width = draw.textlength("Date", font=_font(14))
+    draw.text(
+        ((plot_left + plot_right - date_width) / 2, plot_bottom + 42),
+        "Date",
+        font=_font(14),
+        fill=MUTED,
+    )
+
+    points = _xy_points(
+        x_values,
+        costs,
+        plot,
+        y_min,
+        y_max,
+        x_min=0.0,
+        x_max=x_max,
+    )
+    color = CASE_COLORS[case_name]
+    if len(points) > 1:
+        draw.line(points, fill=color, width=4, joint="curve")
+    for x, y in points:
+        draw.ellipse((x - 5, y - 5, x + 5, y + 5), fill=color)
+
+    minimum_index = int(np.argmin(costs))
+    maximum_index = int(np.argmax(costs))
+    for role, index in (("Min", minimum_index), ("Max", maximum_index)):
+        x, y = points[index]
+        draw.ellipse(
+            (x - 9, y - 9, x + 9, y + 9),
+            outline=TEXT,
+            width=2,
+        )
+        label = (
+            f"{role} {dates[index].strftime('%Y-%m-%d')} | "
+            f"CNY {costs[index]:,.2f}"
+        )
+        label_width = draw.textlength(label, font=_font(14, bold=True))
+        label_y = y - 30 if y > plot_top + 45 else y + 14
+        label_x = min(
+            max(plot_left + 5, x - label_width / 2),
+            plot_right - label_width - 5,
+        )
+        draw.text(
+            (label_x, label_y),
+            label,
+            font=_font(14, bold=True),
+            fill=TEXT,
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(output_path)
+
+
+def make_daily_case_cost_plots(
+    daily_metrics: pd.DataFrame,
+    hourly_dispatch: pd.DataFrame,
+    output_dir: Path,
+) -> list[Path]:
+    rows_by_case, dates, y_min, y_max = _prepare_daily_case_cost_inputs(
+        daily_metrics,
+        hourly_dispatch,
+    )
+    output_dir = Path(output_dir)
+    output_paths = [
+        output_dir / DAILY_COST_PLOT_FILENAMES[case_name]
+        for case_name in CASE_ORDER
+    ]
+    for case_name, output_path in zip(
+        CASE_ORDER,
+        output_paths,
+        strict=True,
+    ):
+        _draw_daily_case_cost_plot(
+            rows_by_case[case_name],
+            dates,
+            case_name,
+            y_min,
+            y_max,
+            output_path,
+        )
+    return output_paths
 
 
 def _validated_task_delay_rows(

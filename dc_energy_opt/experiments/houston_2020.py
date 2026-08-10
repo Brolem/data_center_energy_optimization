@@ -12,6 +12,7 @@ from ..data import load_and_prepare, load_houston_energy_scenario
 from ..optimization import ROLLING_CASES, run_rolling_day_ahead
 from ..reporting import (
     TASK_DELAY_PLOT_FILENAME,
+    make_daily_case_cost_plots,
     make_plots,
     make_task_delay_objective_plot,
     software_versions,
@@ -167,6 +168,11 @@ def run_houston_2020_experiment(
         make_task_delay_objective_plot(
             daily_metrics,
             paths.figures / TASK_DELAY_PLOT_FILENAME,
+        )
+        make_daily_case_cost_plots(
+            daily_metrics,
+            all_results,
+            paths.figures,
         )
 
         parameter_values = asdict(experiment_params)

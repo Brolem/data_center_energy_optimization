@@ -186,6 +186,72 @@ class PlotTests(unittest.TestCase):
                 self.assertEqual(image.mode, "RGB")
                 image.verify()
 
+    def test_daily_case_cost_plots_write_four_images_with_real_dates(
+        self,
+    ) -> None:
+        daily_metrics = pd.DataFrame(
+            {
+                "case": [
+                    case_name
+                    for case_name in CASE_ORDER
+                    for _ in range(2)
+                ],
+                "day": [1, 2] * len(CASE_ORDER),
+                "operating_cost_cny": [
+                    100.0,
+                    120.0,
+                    90.0,
+                    110.0,
+                    95.0,
+                    115.0,
+                    85.0,
+                    105.0,
+                ],
+                "settlement_tail_operating_cost_cny": [0.0, 5.0] * 4,
+            }
+        )
+        hourly_dispatch = pd.DataFrame(
+            {
+                "case": [
+                    case_name
+                    for case_name in CASE_ORDER
+                    for _ in range(2)
+                ],
+                "day": [1, 2] * len(CASE_ORDER),
+                "timestamp_lst": [
+                    "2020-05-01 00:00:00",
+                    "2020-05-02 00:00:00",
+                ]
+                * len(CASE_ORDER),
+                "period_role": ["analysis", "analysis"] * len(CASE_ORDER),
+            }
+        )
+        expected_names = [
+            f"daily_cost_{case_name}.png" for case_name in CASE_ORDER
+        ]
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory) / "figures"
+            output_paths = plots.make_daily_case_cost_plots(
+                daily_metrics,
+                hourly_dispatch,
+                output_dir,
+            )
+
+            self.assertEqual(
+                [path.name for path in output_paths],
+                expected_names,
+            )
+            self.assertEqual(
+                sorted(path.name for path in output_dir.glob("*.png")),
+                sorted(expected_names),
+            )
+            for output_path in output_paths:
+                with Image.open(output_path) as image:
+                    self.assertEqual(image.size, (1800, 900))
+                    self.assertEqual(image.mode, "RGB")
+                    image.verify()
+
     def test_settlement_tail_uses_gray_shading_without_purple_line(
         self,
     ) -> None:

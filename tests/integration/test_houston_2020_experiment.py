@@ -247,6 +247,10 @@ class Houston2020ExperimentTests(unittest.TestCase):
                     ),
                     patch(
                         "dc_energy_opt.experiments.houston_2020."
+                        "make_daily_case_cost_plots"
+                    ),
+                    patch(
+                        "dc_energy_opt.experiments.houston_2020."
                         "software_versions",
                         return_value={},
                     ),
@@ -388,6 +392,10 @@ class Houston2020ExperimentTests(unittest.TestCase):
                 ),
                 patch(
                     "dc_energy_opt.experiments.houston_2020."
+                    "make_daily_case_cost_plots"
+                ),
+                patch(
+                    "dc_energy_opt.experiments.houston_2020."
                     "software_versions",
                     return_value={},
                 ),
@@ -456,7 +464,16 @@ class Houston2020ExperimentTests(unittest.TestCase):
             )
             self.assertEqual(
                 sorted(path.name for path in (output_dir / "figures").iterdir()),
-                sorted([*PLOT_FILENAMES, "task_delay_objectives.png"]),
+                sorted(
+                    [
+                        *PLOT_FILENAMES,
+                        "task_delay_objectives.png",
+                        *(
+                            f"daily_cost_{case_name}.png"
+                            for case_name in CASE_ORDER
+                        ),
+                    ]
+                ),
             )
 
             self.assertEqual(len(experiment.hourly_dispatch), 2700)
