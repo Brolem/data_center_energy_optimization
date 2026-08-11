@@ -8,19 +8,25 @@ from unittest.mock import patch
 import pandas as pd
 
 from dc_energy_opt.experiments import ExperimentResult
-from dc_energy_opt.experiments.storage_scale_sensitivity import (
-    run_storage_scale_sensitivity_experiment,
+from dc_energy_opt.experiments.storage_energy_power_sensitivity import (
+    run_storage_energy_power_sensitivity_experiment,
 )
 
 
-class StorageScaleSensitivityExperimentTests(unittest.TestCase):
-    def test_experiment_publishes_one_project_per_storage_scale(self) -> None:
+class StorageEnergyPowerSensitivityExperimentTests(unittest.TestCase):
+    def test_experiment_publishes_one_project_for_each_grid_cell(
+        self,
+    ) -> None:
         def fake_main_experiment(**kwargs: object) -> ExperimentResult:
             params = kwargs["params"]
             output_dir = Path(kwargs["output_dir"])
             results_dir = output_dir / "results"
             results_dir.mkdir(parents=True)
-            storage_cost = 90.0 - float(params.battery_energy_mwh)
+            storage_cost = (
+                90.0
+                - float(params.battery_energy_mwh)
+                - float(params.battery_charge_power_mw)
+            )
             joint_cost = storage_cost - 6.0
             case_metrics = pd.DataFrame(
                 {
@@ -49,71 +55,43 @@ class StorageScaleSensitivityExperimentTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            output_dir = root / "storage_scale"
+            output_dir = root / "storage_energy_power"
             workload_path = root / "workload.csv"
             energy_path = root / "energy.csv"
             workload_path.write_text("workload", encoding="utf-8")
             energy_path.write_text("energy", encoding="utf-8")
+
             with patch(
-                "dc_energy_opt.experiments.storage_scale_sensitivity."
+                "dc_energy_opt.experiments.storage_energy_power_sensitivity."
                 "run_houston_2020_experiment",
                 side_effect=fake_main_experiment,
             ):
-                result = run_storage_scale_sensitivity_experiment(
+                result = run_storage_energy_power_sensitivity_experiment(
                     workload_data=workload_path,
                     energy_data=energy_path,
                     output_dir=output_dir,
                 )
 
-            self.assertEqual(len(result.metrics), 3)
-            for scale_name in (
-                "energy_2p0_mwh_power_0p5_mw",
-                "energy_4p0_mwh_power_1p0_mw",
-                "energy_6p0_mwh_power_1p5_mw",
-            ):
-                self.assertTrue(
-                    (
-                        output_dir
-                        / "experiments"
-                        / scale_name
-                        / "results"
-                        / "case_metrics.csv"
-                    ).is_file()
-                )
+            self.assertEqual(len(result.metrics), 9)
+            self.assertEqual(
+                len(list((output_dir / "experiments").iterdir())),
+                9,
+            )
             self.assertTrue(
                 (
                     output_dir
                     / "results"
-                    / "storage_scale_sensitivity.csv"
+                    / "storage_energy_power_sensitivity.csv"
                 ).is_file()
-            )
-            self.assertTrue(
-                (
-                    output_dir
-                    / "figures"
-                    / "storage_scale_total_cost.png"
-                ).is_file()
-            )
-            self.assertTrue(
-                (
-                    output_dir
-                    / "figures"
-                    / "storage_scale_shift_value.png"
-                ).is_file()
-            )
-            self.assertTrue((output_dir / "analysis.md").is_file())
-            self.assertRegex(
-                str(result.metadata["run_utc"]),
-                r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$",
-            )
-            self.assertRegex(
-                str(result.metadata["git_commit"]),
-                r"^[0-9a-f]{40}$",
             )
             self.assertEqual(
-                set(result.metadata["input_sha256"]),
-                {"workload", "energy"},
+                sorted(path.name for path in (output_dir / "figures").iterdir()),
+                [
+                    "storage_energy_power_joint_cost.png",
+                    "storage_energy_power_shift_effect.png",
+                ],
             )
+            self.assertTrue((output_dir / "analysis.md").is_file())
 
 
 if __name__ == "__main__":

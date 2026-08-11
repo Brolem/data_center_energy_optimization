@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from dc_energy_opt.config import HOUSTON_2020
 from dc_energy_opt.experiments.flex_ratio_sensitivity import (
     DEFAULT_FLEX_RATIOS,
     FlexRatioSensitivityResult,
@@ -28,12 +29,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--workload-data",
         type=Path,
-        default=Path("data/workload/google_2019_28d_5min.csv"),
+        default=HOUSTON_2020.workload_data,
     )
     parser.add_argument(
         "--energy-data",
         type=Path,
-        default=Path("data/energy/houston_2020_may_hourly.csv"),
+        default=HOUSTON_2020.energy_data,
     )
     parser.add_argument(
         "--flex-ratios",
@@ -43,7 +44,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("outputs/houston_2020_flex_ratio_sensitivity"),
+        default=HOUSTON_2020.flex_ratio_sensitivity_output_dir,
     )
     parser.add_argument("--show-solver-log", action="store_true")
     return parser.parse_args(argv)

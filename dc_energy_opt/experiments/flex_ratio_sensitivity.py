@@ -14,7 +14,7 @@ from ..config import Parameters
 from ..data import load_and_prepare, load_houston_energy_scenario
 from ..optimization import run_rolling_day_ahead
 from ..reporting import make_flex_ratio_sensitivity_plots, software_versions
-from .artifacts import staged_run_directory
+from .artifacts import build_run_provenance, staged_run_directory
 
 
 DEFAULT_FLEX_RATIOS = tuple(index / 10.0 for index in range(11))
@@ -407,6 +407,14 @@ def run_flex_ratio_sensitivity_experiment(
             "parameters": parameter_values,
             "software_versions": software_versions(),
         }
+        metadata.update(
+            build_run_provenance(
+                input_files={
+                    "workload": workload_snapshot,
+                    "energy": energy_snapshot,
+                }
+            )
+        )
         with (paths.root / "run_metadata.json").open(
             "w",
             encoding="utf-8",

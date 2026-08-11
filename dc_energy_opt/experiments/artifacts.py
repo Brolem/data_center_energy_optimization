@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import stat
+import subprocess
 import tempfile
+from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterator
 from uuid import uuid4
@@ -18,6 +22,55 @@ class RunPaths:
     results: Path
     figures: Path
     models: Path
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as file:
+        for block in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _git_commit() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parents[2],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    commit = result.stdout.strip()
+    return commit or None
+
+
+def build_run_provenance(
+    *,
+    input_files: Mapping[str, Path],
+    generated_at_utc: datetime | None = None,
+) -> dict[str, object]:
+    generated_at = (
+        datetime.now(UTC)
+        if generated_at_utc is None
+        else generated_at_utc
+    )
+    if generated_at.tzinfo is None:
+        raise ValueError("generated_at_utc 必须包含时区。")
+    return {
+        "run_utc": generated_at.astimezone(UTC).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
+        "git_commit": _git_commit(),
+        "input_sha256": {
+            name: _sha256(Path(path))
+            for name, path in sorted(input_files.items())
+        },
+    }
 
 
 def _path_exists(path: Path) -> bool:

@@ -13,9 +13,10 @@ import run_first_version
 import plot_day_ahead_day
 import plot_daily_case_costs
 import run_flex_ratio_sensitivity
+import run_storage_energy_power_sensitivity
 import run_storage_scale_sensitivity
 import dc_energy_opt
-from dc_energy_opt.config import Parameters
+from dc_energy_opt.config import HOUSTON_2020, Parameters
 from dc_energy_opt.data import load_and_prepare, load_houston_energy_scenario
 from dc_energy_opt.optimization import build_and_solve, run_rolling_day_ahead
 from dc_energy_opt.experiments import ExperimentResult
@@ -28,6 +29,60 @@ from dc_energy_opt.experiments.storage_scale_sensitivity import (
 
 
 class CliEntrypointTests(unittest.TestCase):
+    def test_storage_energy_power_sensitivity_command_prints_compact_summary(
+        self,
+    ) -> None:
+        sensitivity_metrics = pd.DataFrame(
+            {
+                "storage_scale": [
+                    "energy_2p0_mwh_power_0p5_mw",
+                    "energy_6p0_mwh_power_1p5_mw",
+                ],
+                "battery_energy_mwh": [2.0, 6.0],
+                "battery_power_mw": [0.5, 1.5],
+                "joint_cost_cny": [84.0, 76.0],
+                "storage_effect_on_shift_cny": [-2.0, 1.0],
+            }
+        )
+        result = StorageScaleSensitivityResult(
+            metrics=sensitivity_metrics,
+            metadata={},
+        )
+        workload_path = Path("sensitivity-workload.csv")
+        energy_path = Path("sensitivity-energy.csv")
+        output_dir = Path("sensitivity-output")
+
+        with (
+            patch(
+                "run_storage_energy_power_sensitivity."
+                "run_storage_energy_power_sensitivity_experiment",
+                return_value=result,
+            ) as run_experiment,
+            patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            run_storage_energy_power_sensitivity.main(
+                [
+                    "--workload-data",
+                    str(workload_path),
+                    "--energy-data",
+                    str(energy_path),
+                    "--output-dir",
+                    str(output_dir),
+                ]
+            )
+
+        run_experiment.assert_called_once_with(
+            workload_data=workload_path,
+            energy_data=energy_path,
+            output_dir=output_dir,
+            show_solver_log=False,
+        )
+        summary = stdout.getvalue()
+        self.assertIn("Storage energy-power sensitivity summary:", summary)
+        self.assertIn("Best joint cost: 76.0000 CNY", summary)
+        self.assertIn("Shift-value effect range: -2.0000 to 1.0000 CNY", summary)
+        self.assertNotIn(str(output_dir), summary)
+
     def test_storage_scale_sensitivity_command_delegates_and_prints_summary(
         self,
     ) -> None:
@@ -307,17 +362,48 @@ class CliEntrypointTests(unittest.TestCase):
 
         self.assertEqual(
             arguments.workload_data,
-            Path("data/workload/google_2019_28d_5min.csv"),
+            HOUSTON_2020.workload_data,
         )
         self.assertEqual(
             arguments.energy_data,
-            Path("data/energy/houston_2020_may_hourly.csv"),
+            HOUSTON_2020.energy_data,
         )
         self.assertEqual(
             arguments.output_dir,
-            Path("outputs/houston_2020_main"),
+            HOUSTON_2020.main_output_dir,
         )
         self.assertFalse(arguments.show_solver_log)
+
+    def test_all_experiment_entrypoints_use_houston_2020_defaults(self) -> None:
+        expected_output_directories = (
+            (
+                run_day_ahead_experiment.parse_args([]),
+                HOUSTON_2020.main_output_dir,
+            ),
+            (
+                run_flex_ratio_sensitivity.parse_args([]),
+                HOUSTON_2020.flex_ratio_sensitivity_output_dir,
+            ),
+            (
+                run_storage_scale_sensitivity.parse_args([]),
+                HOUSTON_2020.storage_scale_sensitivity_output_dir,
+            ),
+            (
+                run_storage_energy_power_sensitivity.parse_args([]),
+                HOUSTON_2020.storage_energy_power_sensitivity_output_dir,
+            ),
+        )
+        for arguments, expected_output_dir in expected_output_directories:
+            with self.subTest(output_dir=expected_output_dir):
+                self.assertEqual(
+                    arguments.workload_data,
+                    HOUSTON_2020.workload_data,
+                )
+                self.assertEqual(
+                    arguments.energy_data,
+                    HOUSTON_2020.energy_data,
+                )
+                self.assertEqual(arguments.output_dir, expected_output_dir)
 
     def test_formal_package_exports_current_interfaces(self) -> None:
         self.assertIs(dc_energy_opt.Parameters, Parameters)

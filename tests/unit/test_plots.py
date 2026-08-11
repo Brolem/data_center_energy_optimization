@@ -10,6 +10,12 @@ import pandas as pd
 from PIL import Image, ImageColor, ImageDraw
 
 import dc_energy_opt.reporting.plots as plots
+from dc_energy_opt.reporting import (
+    plot_daily,
+    plot_main,
+    plot_sensitivity,
+    plot_shared,
+)
 from dc_energy_opt.reporting.plots import (
     PLOT_FILENAMES,
     make_daily_plots,
@@ -93,6 +99,15 @@ def _daily_plot_inputs(day_number: int) -> pd.DataFrame:
 
 
 class PlotTests(unittest.TestCase):
+    def test_plot_modules_keep_the_compatibility_facade_interfaces(self) -> None:
+        self.assertIs(plots.make_plots, plot_main.make_plots)
+        self.assertIs(plots.make_daily_plots, plot_daily.make_daily_plots)
+        self.assertIs(
+            plots.make_flex_ratio_sensitivity_plots,
+            plot_sensitivity.make_flex_ratio_sensitivity_plots,
+        )
+        self.assertIs(plots._mark_settlement_tail, plot_shared._mark_settlement_tail)
+
     def test_battery_power_uses_hour_interval_centers(self) -> None:
         data = pd.DataFrame(
             {
@@ -392,6 +407,25 @@ class PlotTests(unittest.TestCase):
                 )
                 self.assertEqual(len(gaplimit_paths), 3)
 
+            saturation_metrics = sensitivity_metrics.copy()
+            saturation_metrics["saturation_onset"] = 0.5
+            with tempfile.TemporaryDirectory() as saturation_directory:
+                saturation_paths = plots.make_flex_ratio_sensitivity_plots(
+                    saturation_metrics,
+                    Path(saturation_directory),
+                )
+                self.assertEqual(
+                    [path.name for path in saturation_paths],
+                    [
+                        "flex_ratio_total_cost.png",
+                        "flex_ratio_cost_savings.png",
+                        "flex_ratio_marginal_savings.png",
+                    ],
+                )
+                for output_path in saturation_paths:
+                    with Image.open(output_path) as image:
+                        image.verify()
+
     def test_storage_scale_sensitivity_plots_write_two_images(self) -> None:
         storage_metrics = pd.DataFrame(
             {
@@ -420,6 +454,55 @@ class PlotTests(unittest.TestCase):
                 [
                     "storage_scale_total_cost.png",
                     "storage_scale_shift_value.png",
+                ],
+            )
+            for output_path in output_paths:
+                with Image.open(output_path) as image:
+                    self.assertEqual(image.size, (1800, 900))
+                    self.assertEqual(image.mode, "RGB")
+                    image.verify()
+
+    def test_storage_energy_power_sensitivity_plots_write_two_heatmaps(
+        self,
+    ) -> None:
+        storage_metrics = pd.DataFrame(
+            [
+                {
+                    "storage_scale": (
+                        f"energy_{energy_mwh:.1f}_mwh_"
+                        f"power_{power_mw:.1f}_mw"
+                    ),
+                    "battery_energy_mwh": energy_mwh,
+                    "battery_power_mw": power_mw,
+                    "renewables_storage_cost_cny": (
+                        100.0 - energy_mwh - power_mw
+                    ),
+                    "joint_cost_cny": (
+                        90.0 - energy_mwh - 2.0 * power_mw
+                    ),
+                    "no_storage_shift_savings_cny": 8.0,
+                    "storage_shift_savings_cny": (
+                        7.0 + 0.5 * power_mw
+                    ),
+                }
+                for energy_mwh in (2.0, 4.0, 6.0)
+                for power_mw in (0.5, 1.0, 1.5)
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_paths = (
+                plots.make_storage_energy_power_sensitivity_plots(
+                    storage_metrics,
+                    Path(temporary_directory),
+                )
+            )
+
+            self.assertEqual(
+                [path.name for path in output_paths],
+                [
+                    "storage_energy_power_joint_cost.png",
+                    "storage_energy_power_shift_effect.png",
                 ],
             )
             for output_path in output_paths:

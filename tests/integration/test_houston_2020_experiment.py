@@ -621,6 +621,25 @@ class Houston2020ExperimentTests(unittest.TestCase):
                 experiment.metadata["cost_baseline_case"],
                 "renewables_only",
             )
+            self.assertRegex(
+                str(experiment.metadata["run_utc"]),
+                r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$",
+            )
+            self.assertRegex(
+                str(experiment.metadata["git_commit"]),
+                r"^[0-9a-f]{40}$",
+            )
+            self.assertEqual(
+                experiment.metadata["input_sha256"],
+                {
+                    "workload": hashlib.sha256(
+                        WORKLOAD_PATH.read_bytes()
+                    ).hexdigest(),
+                    "energy": hashlib.sha256(
+                        ENERGY_PATH.read_bytes()
+                    ).hexdigest(),
+                },
+            )
 
     def test_invalid_energy_data_preserves_existing_output(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

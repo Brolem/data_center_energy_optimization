@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from dc_energy_opt.config import HOUSTON_2020
 from dc_energy_opt.experiments import (
     ExperimentResult,
     run_houston_2020_experiment,
@@ -82,17 +83,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--workload-data",
         type=Path,
-        default=Path("data/workload/google_2019_28d_5min.csv"),
+        default=HOUSTON_2020.workload_data,
     )
     parser.add_argument(
         "--energy-data",
         type=Path,
-        default=Path("data/energy/houston_2020_may_hourly.csv"),
+        default=HOUSTON_2020.energy_data,
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("outputs/houston_2020_main"),
+        default=HOUSTON_2020.main_output_dir,
     )
     parser.add_argument("--show-solver-log", action="store_true")
     return parser.parse_args(argv)

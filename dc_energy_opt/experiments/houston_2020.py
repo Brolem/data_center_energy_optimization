@@ -17,7 +17,7 @@ from ..reporting import (
     make_task_delay_objective_plot,
     software_versions,
 )
-from .artifacts import staged_run_directory
+from .artifacts import build_run_provenance, staged_run_directory
 
 
 @dataclass(frozen=True)
@@ -251,6 +251,14 @@ def run_houston_2020_experiment(
             "parameters": parameter_values,
             "software_versions": software_versions(),
         }
+        metadata.update(
+            build_run_provenance(
+                input_files={
+                    "workload": workload_snapshot,
+                    "energy": energy_snapshot,
+                }
+            )
+        )
         with (paths.root / "run_metadata.json").open(
             "w", encoding="utf-8"
         ) as file:

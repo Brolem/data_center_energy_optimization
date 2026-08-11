@@ -157,6 +157,18 @@ class FlexRatioSensitivityExperimentTests(unittest.TestCase):
                 ],
             )
             self.assertTrue((output_dir / "run_metadata.json").is_file())
+            self.assertRegex(
+                str(result.metadata["run_utc"]),
+                r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$",
+            )
+            self.assertRegex(
+                str(result.metadata["git_commit"]),
+                r"^[0-9a-f]{40}$",
+            )
+            self.assertEqual(
+                set(result.metadata["input_sha256"]),
+                {"workload", "energy"},
+            )
 
 
 if __name__ == "__main__":

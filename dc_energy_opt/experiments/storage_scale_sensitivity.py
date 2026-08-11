@@ -10,7 +10,7 @@ import pandas as pd
 
 from ..config import Parameters
 from ..reporting import make_storage_scale_sensitivity_plots, software_versions
-from .artifacts import staged_run_directory
+from .artifacts import build_run_provenance, staged_run_directory
 from .houston_2020 import run_houston_2020_experiment
 
 
@@ -348,6 +348,14 @@ def run_storage_scale_sensitivity_experiment(
             "parameters": parameter_values,
             "software_versions": software_versions(),
         }
+        metadata.update(
+            build_run_provenance(
+                input_files={
+                    "workload": workload_path,
+                    "energy": energy_path,
+                }
+            )
+        )
         with (paths.root / "run_metadata.json").open(
             "w",
             encoding="utf-8",

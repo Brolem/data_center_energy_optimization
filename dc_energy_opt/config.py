@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -66,3 +67,29 @@ class Parameters:
 
     def dc_power_mw(self, cpu_utilization_pu: float) -> float:
         return self.pue * self.it_power_mw(cpu_utilization_pu)
+
+
+@dataclass(frozen=True)
+class ScenarioConfig:
+    workload_data: Path
+    energy_data: Path
+    main_output_dir: Path
+    flex_ratio_sensitivity_output_dir: Path
+    storage_scale_sensitivity_output_dir: Path
+    storage_energy_power_sensitivity_output_dir: Path
+
+
+HOUSTON_2020 = ScenarioConfig(
+    workload_data=Path("data/workload/google_2019_28d_5min.csv"),
+    energy_data=Path("data/energy/houston_2020_may_hourly.csv"),
+    main_output_dir=Path("outputs/houston_2020_main"),
+    flex_ratio_sensitivity_output_dir=Path(
+        "outputs/houston_2020_flex_ratio_sensitivity"
+    ),
+    storage_scale_sensitivity_output_dir=Path(
+        "outputs/houston_2020_storage_scale_sensitivity"
+    ),
+    storage_energy_power_sensitivity_output_dir=Path(
+        "outputs/houston_2020_storage_energy_power_sensitivity"
+    ),
+)
