@@ -222,8 +222,8 @@ conda run -n scip_env python -m unittest discover -s tests -t . -v
 - 创建：`tests/paper/__init__.py`
 - 创建：`tests/paper/test_cli.py`
 
-- [ ] 创建包边界文件；所有 `__init__.py` 只包含包说明或明确公开导出。
-- [ ] 在 `tests/paper/test_cli.py` 写入统一入口预期：
+- [x] 创建包边界文件；所有 `__init__.py` 只包含包说明或明确公开导出。
+- [x] 在 `tests/paper/test_cli.py` 写入统一入口预期：
 
 ```python
 import unittest
@@ -242,7 +242,7 @@ class PaperCliRoutingTests(unittest.TestCase):
         self.assertEqual(command.study, "flex-ratio")
 ```
 
-- [ ] 运行 `conda run -n scip_env python -m unittest tests.paper.test_cli -v`，确认因 `experiments.paper.cli` 尚不存在而失败。
+- [x] 运行 `conda run -n scip_env python -m unittest discover -s tests/paper -p test_cli.py -v`，确认因 `experiments.paper.cli` 尚不存在而出现两项预期失败；添加最小解析实现后，两项测试通过。
 
 ## 任务 2：迁移共享发布能力和论文实验实现
 
