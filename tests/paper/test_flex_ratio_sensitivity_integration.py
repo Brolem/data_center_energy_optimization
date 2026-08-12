@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import tempfile
 import unittest
@@ -8,7 +8,7 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 
-from dc_energy_opt.experiments.flex_ratio_sensitivity import (
+from experiments.paper.houston_2020.sensitivity.flex_ratio import (
     run_flex_ratio_sensitivity_experiment,
 )
 
@@ -77,17 +77,17 @@ class FlexRatioSensitivityExperimentTests(unittest.TestCase):
             energy_path.write_text("energy", encoding="utf-8")
             with (
                 patch(
-                    "dc_energy_opt.experiments.flex_ratio_sensitivity."
+                    "experiments.paper.houston_2020.sensitivity.flex_ratio."
                     "load_and_prepare",
                     return_value=(pd.DataFrame(), hourly, 8, 28),
                 ),
                 patch(
-                    "dc_energy_opt.experiments.flex_ratio_sensitivity."
+                    "experiments.paper.houston_2020.sensitivity.flex_ratio."
                     "load_houston_energy_scenario",
                     return_value=energy_scenario,
                 ),
                 patch(
-                    "dc_energy_opt.experiments.flex_ratio_sensitivity."
+                    "experiments.paper.houston_2020.sensitivity.flex_ratio."
                     "run_rolling_day_ahead",
                     side_effect=fake_solve,
                 ) as solve,

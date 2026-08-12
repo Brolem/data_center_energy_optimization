@@ -1,4 +1,4 @@
-# 固定 3 小时时移的储能能量×功率敏感性分析结果
+﻿# 固定 3 小时时移的储能能量×功率敏感性分析结果
 
 ## 设置与口径
 
@@ -7,7 +7,7 @@
 电池能量取 2、4、6 MWh，充放电功率相同且取 0.5、1、1.5 MW。九个组合各自独立求解四个正式算例，共 36 次求解。
 
 ```powershell
-conda run -n scip_env python run_storage_energy_power_sensitivity.py
+conda run -n scip_env python -m experiments.paper sensitivity storage-energy-power
 ```
 
 ## 结果

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import tempfile
 import unittest
@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from dc_energy_opt.experiments import ExperimentResult
-from dc_energy_opt.experiments.storage_scale_sensitivity import (
+from experiments.paper.houston_2020 import ExperimentResult
+from experiments.paper.houston_2020.sensitivity.storage_scale import (
     run_storage_scale_sensitivity_experiment,
 )
 
@@ -55,7 +55,7 @@ class StorageScaleSensitivityExperimentTests(unittest.TestCase):
             workload_path.write_text("workload", encoding="utf-8")
             energy_path.write_text("energy", encoding="utf-8")
             with patch(
-                "dc_energy_opt.experiments.storage_scale_sensitivity."
+                "experiments.paper.houston_2020.sensitivity.storage_scale."
                 "run_houston_2020_experiment",
                 side_effect=fake_main_experiment,
             ):

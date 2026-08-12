@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import unittest
 
-from dc_energy_opt.experiments.storage_energy_power_sensitivity import (
+from experiments.paper.houston_2020.sensitivity.storage_energy_power import (
     DEFAULT_STORAGE_ENERGY_POWER_SCALES,
 )
 

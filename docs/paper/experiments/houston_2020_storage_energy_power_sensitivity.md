@@ -1,4 +1,4 @@
-# 固定 3 小时时移的储能能量×功率敏感性分析
+﻿# 固定 3 小时时移的储能能量×功率敏感性分析
 
 ## 目的
 
@@ -15,7 +15,7 @@
 ## 运行
 
 ```powershell
-conda run -n scip_env python run_storage_energy_power_sensitivity.py
+conda run -n scip_env python -m experiments.paper sensitivity storage-energy-power
 ```
 
 默认输出到 `outputs/houston_2020_storage_energy_power_sensitivity/`。可使用 `--workload-data`、`--energy-data`、`--output-dir` 和 `--show-solver-log` 修改输入、输出和求解日志。

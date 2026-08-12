@@ -1,4 +1,4 @@
-# 固定 3 小时时移下的储能规模敏感性分析结果
+﻿# 固定 3 小时时移下的储能规模敏感性分析结果
 
 ## 目的
 
@@ -7,7 +7,7 @@
 ## 复现设置
 
 ```powershell
-conda run -n scip_env python run_storage_scale_sensitivity.py
+conda run -n scip_env python -m experiments.paper sensitivity storage-scale
 ```
 
 - 负载：Google 2019 聚合工作负载，28 天。

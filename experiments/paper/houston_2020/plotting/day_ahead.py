@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 import pandas as pd
@@ -99,57 +98,31 @@ def format_daily_objective_summary(
     return "\n".join(lines)
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="从现有小时调度结果生成指定日期的五张图。",
-    )
-    parser.add_argument(
-        "--hourly-dispatch",
-        type=Path,
-        default="outputs/houston_2020_main/results/hourly_dispatch.csv",
-    )
-    parser.add_argument(
-        "--day",
-        type=int,
-        default=8,
-    )
-    parser.add_argument(
-        "--daily-metrics",
-        type=Path,
-        default="outputs/houston_2020_main/results/daily_metrics.csv",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default="outputs/houston_2020_main/figures",
-    )
-    return parser.parse_args(argv)
-
-
-def main(argv: list[str] | None = None) -> None:
-    args = parse_args(argv)
-    if not args.hourly_dispatch.is_file():
+def plot_day_ahead_results(
+    *,
+    hourly_dispatch: Path,
+    daily_metrics: Path,
+    day_number: int,
+    output_dir: Path,
+) -> None:
+    if not hourly_dispatch.is_file():
         raise FileNotFoundError(
-            f"hourly_dispatch.csv 不存在: {args.hourly_dispatch}"
+            f"hourly_dispatch.csv 不存在: {hourly_dispatch}"
         )
-    if not args.daily_metrics.is_file():
+    if not daily_metrics.is_file():
         raise FileNotFoundError(
-            f"daily_metrics.csv 不存在: {args.daily_metrics}"
+            f"daily_metrics.csv 不存在: {daily_metrics}"
         )
-    hourly_results = pd.read_csv(args.hourly_dispatch)
-    daily_metrics = pd.read_csv(args.daily_metrics)
-    print(format_daily_objective_summary(hourly_results, args.day))
+    hourly_results = pd.read_csv(hourly_dispatch)
+    daily_metrics_frame = pd.read_csv(daily_metrics)
+    print(format_daily_objective_summary(hourly_results, day_number))
     daily_output_dir = make_daily_plots(
         hourly_results,
-        args.day,
-        args.output_dir,
+        day_number,
+        output_dir,
     )
     make_task_delay_objective_plot(
-        daily_metrics,
+        daily_metrics_frame,
         daily_output_dir / TASK_DELAY_PLOT_FILENAME,
-        day_number=args.day,
+        day_number=day_number,
     )
-
-
-if __name__ == "__main__":
-    main()

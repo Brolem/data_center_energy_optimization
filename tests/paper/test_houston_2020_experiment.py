@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import hashlib
 import json
@@ -12,7 +12,7 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 
-from dc_energy_opt.experiments.houston_2020 import (
+from experiments.paper.houston_2020.day_ahead import (
     run_houston_2020_experiment,
 )
 from dc_energy_opt.reporting import PLOT_FILENAMES
@@ -70,21 +70,21 @@ class Houston2020ExperimentTests(unittest.TestCase):
     ) -> None:
         with (
             patch(
-                "dc_energy_opt.experiments.houston_2020.load_and_prepare",
+                "experiments.paper.houston_2020.day_ahead.load_and_prepare",
                 side_effect=RuntimeError("data loading reached"),
             ) as load_workload,
             patch(
-                "dc_energy_opt.experiments.houston_2020."
+                "experiments.paper.houston_2020.day_ahead."
                 "load_houston_energy_scenario",
                 side_effect=RuntimeError("energy loading reached"),
             ) as load_energy,
             patch(
-                "dc_energy_opt.experiments.houston_2020."
+                "experiments.paper.houston_2020.day_ahead."
                 "run_rolling_day_ahead",
                 side_effect=RuntimeError("solver reached"),
             ) as solve,
             patch(
-                "dc_energy_opt.experiments.houston_2020."
+                "experiments.paper.houston_2020.day_ahead."
                 "staged_run_directory",
                 side_effect=RuntimeError("staging reached"),
             ) as stage,
@@ -224,33 +224,33 @@ class Houston2020ExperimentTests(unittest.TestCase):
                 energy_data.write_bytes(b"energy")
                 with (
                     patch(
-                        "dc_energy_opt.experiments.houston_2020."
+                        "experiments.paper.houston_2020.day_ahead."
                         "load_and_prepare",
                         return_value=(pd.DataFrame({"raw": [1]}), hourly, 8, 28),
                     ) as load_workload,
                     patch(
-                        "dc_energy_opt.experiments.houston_2020."
+                        "experiments.paper.houston_2020.day_ahead."
                         "load_houston_energy_scenario",
                         return_value=energy_scenario,
                     ) as load_energy,
                     patch(
-                        "dc_energy_opt.experiments.houston_2020."
+                        "experiments.paper.houston_2020.day_ahead."
                         "run_rolling_day_ahead",
                         side_effect=fake_solve,
                     ),
                     patch(
-                        "dc_energy_opt.experiments.houston_2020.make_plots"
+                        "experiments.paper.houston_2020.day_ahead.make_plots"
                     ),
                     patch(
-                        "dc_energy_opt.experiments.houston_2020."
+                        "experiments.paper.houston_2020.day_ahead."
                         "make_task_delay_objective_plot"
                     ),
                     patch(
-                        "dc_energy_opt.experiments.houston_2020."
+                        "experiments.paper.houston_2020.day_ahead."
                         "make_daily_case_cost_plots"
                     ),
                     patch(
-                        "dc_energy_opt.experiments.houston_2020."
+                        "experiments.paper.houston_2020.day_ahead."
                         "software_versions",
                         return_value={},
                     ),
@@ -365,37 +365,37 @@ class Houston2020ExperimentTests(unittest.TestCase):
 
             with (
                 patch(
-                    "dc_energy_opt.experiments.houston_2020."
+                    "experiments.paper.houston_2020.day_ahead."
                     "load_and_prepare",
                     side_effect=load_workload,
                 ),
                 patch(
-                    "dc_energy_opt.experiments.houston_2020."
+                    "experiments.paper.houston_2020.day_ahead."
                     "load_houston_energy_scenario",
                     return_value=energy_scenario,
                 ),
                 patch(
-                    "dc_energy_opt.experiments.houston_2020."
+                    "experiments.paper.houston_2020.day_ahead."
                     "run_rolling_day_ahead",
                     side_effect=fake_solve,
                 ),
                 patch(
-                    "dc_energy_opt.experiments.houston_2020.shutil.copyfile",
+                    "experiments.paper.houston_2020.day_ahead.shutil.copyfile",
                     side_effect=copy_then_mutate_source,
                 ),
                 patch(
-                    "dc_energy_opt.experiments.houston_2020.make_plots"
+                    "experiments.paper.houston_2020.day_ahead.make_plots"
                 ),
                 patch(
-                    "dc_energy_opt.experiments.houston_2020."
+                    "experiments.paper.houston_2020.day_ahead."
                     "make_task_delay_objective_plot"
                 ),
                 patch(
-                    "dc_energy_opt.experiments.houston_2020."
+                    "experiments.paper.houston_2020.day_ahead."
                     "make_daily_case_cost_plots"
                 ),
                 patch(
-                    "dc_energy_opt.experiments.houston_2020."
+                    "experiments.paper.houston_2020.day_ahead."
                     "software_versions",
                     return_value={},
                 ),
@@ -699,7 +699,7 @@ class Houston2020ExperimentTests(unittest.TestCase):
 
             with (
                 patch(
-                    "dc_energy_opt.experiments.houston_2020.run_rolling_day_ahead",
+                    "experiments.paper.houston_2020.day_ahead.run_rolling_day_ahead",
                     side_effect=RuntimeError("injected solver failure"),
                 ),
                 self.assertRaisesRegex(
@@ -732,11 +732,11 @@ class Houston2020ExperimentTests(unittest.TestCase):
 
             with (
                 patch(
-                    "dc_energy_opt.experiments.houston_2020.run_rolling_day_ahead",
+                    "experiments.paper.houston_2020.day_ahead.run_rolling_day_ahead",
                     side_effect=fake_solve,
                 ),
                 patch(
-                    "dc_energy_opt.experiments.houston_2020.make_plots",
+                    "experiments.paper.houston_2020.day_ahead.make_plots",
                     side_effect=OSError("injected plot failure"),
                 ),
                 self.assertRaisesRegex(OSError, "injected plot failure"),

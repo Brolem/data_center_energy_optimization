@@ -1,4 +1,4 @@
-# Houston 2020 主实验
+﻿# Houston 2020 主实验
 
 ## 1. 正式输入
 
@@ -33,7 +33,7 @@
 ## 4. 运行方式
 
 ```powershell
-conda run -n scip_env python run_day_ahead_experiment.py
+conda run -n scip_env python -m experiments.paper day-ahead
 ```
 
 正式命令行参数为：
@@ -48,7 +48,7 @@ conda run -n scip_env python run_day_ahead_experiment.py
 已有 `hourly_dispatch.csv` 和 `daily_metrics.csv` 时，可输入指定日期直接生成单日图，无需重新求解：
 
 ```powershell
-conda run -n scip_env python plot_day_ahead_day.py `
+conda run -n scip_env python -m experiments.paper plot day-ahead `
   --hourly-dispatch outputs/houston_2020_main/results/hourly_dispatch.csv `
   --daily-metrics outputs/houston_2020_main/results/daily_metrics.csv `
   --day 28 `
@@ -60,7 +60,7 @@ conda run -n scip_env python plot_day_ahead_day.py `
 已有同一实验的两个结果 CSV 时，可直接生成四个正式算例各自的每日成本柱形图，无需重新求解：
 
 ```powershell
-conda run -n scip_env python plot_daily_case_costs.py `
+conda run -n scip_env python -m experiments.paper plot daily-costs `
   --daily-metrics outputs/houston_2020_main/results/daily_metrics.csv `
   --hourly-dispatch outputs/houston_2020_main/results/hourly_dispatch.csv `
   --output-dir outputs/houston_2020_main/figures
@@ -71,10 +71,10 @@ conda run -n scip_env python plot_daily_case_costs.py `
 固定输入和模型参数、只扫描 `flex_ratio` 的成本敏感性分析命令为：
 
 ```powershell
-conda run -n scip_env python run_flex_ratio_sensitivity.py
+conda run -n scip_env python -m experiments.paper sensitivity flex-ratio
 ```
 
-固定 max_delay_h=3 的储能规模敏感性分析使用 run_storage_scale_sensitivity.py；三档储能项目、汇总结果和分析口径见 docs/experiments/houston_2020_storage_scale_sensitivity.md。
+固定 max_delay_h=3 的储能规模敏感性分析使用 `python -m experiments.paper sensitivity storage-scale`；三档储能项目、汇总结果和分析口径见 docs/paper/experiments/houston_2020_storage_scale_sensitivity.md。
 
 默认扫描 `0.00,0.10,...,1.00`，以 `renewables_only` 对照 `renewables_shift`，以 `renewables_storage` 对照 `joint`。总成本始终包含 672 小时分析期和第 28 日 3 小时结算尾段；结果输出至 `outputs/houston_2020_flex_ratio_sensitivity/`，包含结果 CSV 和总成本、节省率、边际节省三张图。局部加密可使用 `--flex-ratios 0,0.05,0.1,0.15,0.2`。
 

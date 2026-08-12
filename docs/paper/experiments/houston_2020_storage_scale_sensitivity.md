@@ -1,4 +1,4 @@
-# 固定 3 小时延迟的储能规模敏感性分析
+﻿# 固定 3 小时延迟的储能规模敏感性分析
 
 ## 目的
 
@@ -17,7 +17,7 @@
 ## 运行
 
 ~~~powershell
-conda run -n scip_env python run_storage_scale_sensitivity.py
+conda run -n scip_env python -m experiments.paper sensitivity storage-scale
 ~~~
 
 默认输出目录为 outputs/houston_2020_storage_scale_sensitivity/。可使用 --workload-data、--energy-data、--output-dir 和 --show-solver-log 指定输入、输出和求解日志。
