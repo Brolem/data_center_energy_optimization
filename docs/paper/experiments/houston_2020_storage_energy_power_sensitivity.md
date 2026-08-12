@@ -18,7 +18,7 @@
 conda run -n scip_env python -m experiments.paper sensitivity storage-energy-power
 ```
 
-默认输出到 `outputs/houston_2020_storage_energy_power_sensitivity/`。可使用 `--workload-data`、`--energy-data`、`--output-dir` 和 `--show-solver-log` 修改输入、输出和求解日志。
+默认输出到 `outputs/paper/houston_2020/sensitivity/storage_energy_power/`。可使用 `--workload-data`、`--energy-data`、`--output-dir` 和 `--show-solver-log` 修改输入、输出和求解日志。
 
 终端只打印联合成本最低的储能组合与“储能对时移价值影响”的取值范围，完整的九格指标写入结果 CSV 和两张热图。
 
@@ -43,7 +43,7 @@ S_{\text{with storage}} = C_{\text{renewables storage}} - C_{\text{joint}}
 ## 输出结构
 
 ```text
-outputs/houston_2020_storage_energy_power_sensitivity/
+outputs/paper/houston_2020/sensitivity/storage_energy_power/
 ├── experiments/
 │   ├── energy_2p0_mwh_power_0p5_mw/
 │   ├── …（共 9 个独立项目）

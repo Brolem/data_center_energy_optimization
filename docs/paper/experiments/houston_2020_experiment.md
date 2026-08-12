@@ -49,10 +49,10 @@ conda run -n scip_env python -m experiments.paper day-ahead
 
 ```powershell
 conda run -n scip_env python -m experiments.paper plot day-ahead `
-  --hourly-dispatch outputs/houston_2020_main/results/hourly_dispatch.csv `
-  --daily-metrics outputs/houston_2020_main/results/daily_metrics.csv `
+  --hourly-dispatch outputs/paper/houston_2020/day_ahead/results/hourly_dispatch.csv `
+  --daily-metrics outputs/paper/houston_2020/day_ahead/results/daily_metrics.csv `
   --day 28 `
-  --output-dir outputs/houston_2020_main/figures
+  --output-dir outputs/paper/houston_2020/day_ahead/figures
 ```
 
 `--day` 必须位于 `1..28`。第 1～27 天输出 24 小时；第 28 天输出 24 小时分析期和 3 小时结算尾段，尾段使用浅灰背景标识，其成本包含在第 28 天成本分解图中。
@@ -61,9 +61,9 @@ conda run -n scip_env python -m experiments.paper plot day-ahead `
 
 ```powershell
 conda run -n scip_env python -m experiments.paper plot daily-costs `
-  --daily-metrics outputs/houston_2020_main/results/daily_metrics.csv `
-  --hourly-dispatch outputs/houston_2020_main/results/hourly_dispatch.csv `
-  --output-dir outputs/houston_2020_main/figures
+  --daily-metrics outputs/paper/houston_2020/day_ahead/results/daily_metrics.csv `
+  --hourly-dispatch outputs/paper/houston_2020/day_ahead/results/hourly_dispatch.csv `
+  --output-dir outputs/paper/houston_2020/day_ahead/figures
 ```
 
 四张图的横轴日期从 `hourly_dispatch.csv` 的分析期 `timestamp_lst` 获取，纵轴使用 `daily_metrics.csv` 的 `operating_cost_cny`，并共享同一纵轴范围。第 28 日的 `settlement_tail_operating_cost_cny` 仅作文字标注，不进入柱体。
@@ -76,12 +76,12 @@ conda run -n scip_env python -m experiments.paper sensitivity flex-ratio
 
 固定 max_delay_h=3 的储能规模敏感性分析使用 `python -m experiments.paper sensitivity storage-scale`；三档储能项目、汇总结果和分析口径见 docs/paper/experiments/houston_2020_storage_scale_sensitivity.md。
 
-默认扫描 `0.00,0.10,...,1.00`，以 `renewables_only` 对照 `renewables_shift`，以 `renewables_storage` 对照 `joint`。总成本始终包含 672 小时分析期和第 28 日 3 小时结算尾段；结果输出至 `outputs/houston_2020_flex_ratio_sensitivity/`，包含结果 CSV 和总成本、节省率、边际节省三张图。局部加密可使用 `--flex-ratios 0,0.05,0.1,0.15,0.2`。
+默认扫描 `0.00,0.10,...,1.00`，以 `renewables_only` 对照 `renewables_shift`，以 `renewables_storage` 对照 `joint`。总成本始终包含 672 小时分析期和第 28 日 3 小时结算尾段；结果输出至 `outputs/paper/houston_2020/sensitivity/flex_ratio/`，包含结果 CSV 和总成本、节省率、边际节省三张图。局部加密可使用 `--flex-ratios 0,0.05,0.1,0.15,0.2`。
 
 ## 5. 输出结构
 
 ```text
-outputs/houston_2020_main/
+outputs/paper/houston_2020/day_ahead/
 ├── inputs/
 │   ├── google_2019_28d_5min.csv
 │   ├── houston_2020_may_hourly.csv
@@ -118,7 +118,7 @@ outputs/houston_2020_main/
 敏感性分析输出结构为：
 
 ```text
-outputs/houston_2020_flex_ratio_sensitivity/
+outputs/paper/houston_2020/sensitivity/flex_ratio/
 ├── results/flex_ratio_sensitivity.csv
 ├── figures/
 │   ├── flex_ratio_total_cost.png

@@ -8,7 +8,12 @@ experiments/
   paper/             论文线：Houston 2020 实验、敏感性与绘图
   career/            求职线：复用底座的展示项目边界
 data/                 共享正式输入
-outputs/              正式结果，结构迁移不改动
+outputs/
+  paper/
+    houston_2020/
+      day_ahead/      论文主实验完整结果
+      sensitivity/    三类论文敏感性分析结果
+  career/             求职线结果边界
 docs/                 当前文档与历史归档
 tests/                次级工程设施：shared 与 paper
 ```
@@ -18,6 +23,8 @@ tests/                次级工程设施：shared 与 paper
 `experiments.paper` 可以调用 `dc_energy_opt`；`dc_energy_opt` 不反向依赖任何实验线。论文线与求职线不互相导入。共享底座不包含具体论文命令，实验线不复制数据读取、优化模型或结果发布实现。
 
 论文线统一入口为 `python -m experiments.paper`。入口只负责参数解析、调用现有实验函数和输出摘要；数学模型仍位于共享底座。
+
+每个叶子实验目录是一个完整发布单元，内部包含输入快照、模型、结果、图和元数据。同一命令重复运行时安全覆盖固定目录；运行失败时保留上一份完整结果。
 
 ## Git 与文档规则
 

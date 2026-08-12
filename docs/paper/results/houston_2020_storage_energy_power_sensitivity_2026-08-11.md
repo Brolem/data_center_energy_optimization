@@ -34,8 +34,8 @@ conda run -n scip_env python -m experiments.paper sensitivity storage-energy-pow
 
 ## 可复核产物
 
-- [汇总指标 CSV](../../../outputs/houston_2020_storage_energy_power_sensitivity/results/storage_energy_power_sensitivity.csv)
-- [联合成本热图](../../../outputs/houston_2020_storage_energy_power_sensitivity/figures/storage_energy_power_joint_cost.png)
-- [储能对时移价值影响热图](../../../outputs/houston_2020_storage_energy_power_sensitivity/figures/storage_energy_power_shift_effect.png)
-- [运行元数据](../../../outputs/houston_2020_storage_energy_power_sensitivity/run_metadata.json)
-- [九个独立项目目录](../../../outputs/houston_2020_storage_energy_power_sensitivity/experiments/)
+- [汇总指标 CSV](../../../outputs/paper/houston_2020/sensitivity/storage_energy_power/results/storage_energy_power_sensitivity.csv)
+- [联合成本热图](../../../outputs/paper/houston_2020/sensitivity/storage_energy_power/figures/storage_energy_power_joint_cost.png)
+- [储能对时移价值影响热图](../../../outputs/paper/houston_2020/sensitivity/storage_energy_power/figures/storage_energy_power_shift_effect.png)
+- [运行元数据](../../../outputs/paper/houston_2020/sensitivity/storage_energy_power/run_metadata.json)
+- [九个独立项目目录](../../../outputs/paper/houston_2020/sensitivity/storage_energy_power/experiments/)

@@ -20,7 +20,7 @@
 conda run -n scip_env python -m experiments.paper sensitivity storage-scale
 ~~~
 
-默认输出目录为 outputs/houston_2020_storage_scale_sensitivity/。可使用 --workload-data、--energy-data、--output-dir 和 --show-solver-log 指定输入、输出和求解日志。
+默认输出目录为 `outputs/paper/houston_2020/sensitivity/storage_scale/`。可使用 `--workload-data`、`--energy-data`、`--output-dir` 和 `--show-solver-log` 指定输入、输出和求解日志。
 
 ## 比较指标
 
@@ -46,7 +46,7 @@ S_{\text{with storage}} - S_{\text{no storage}}
 ## 输出结构
 
 ~~~text
-outputs/houston_2020_storage_scale_sensitivity/
+outputs/paper/houston_2020/sensitivity/storage_scale/
 ├── experiments/
 │   ├── energy_2p0_mwh_power_0p5_mw/
 │   ├── energy_4p0_mwh_power_1p0_mw/
