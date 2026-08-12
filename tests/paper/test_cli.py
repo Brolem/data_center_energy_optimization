@@ -37,6 +37,27 @@ class PaperCliRoutingTests(unittest.TestCase):
         )
         self.assertFalse(command.arguments.show_solver_log)
 
+    def test_houston_2020_output_paths_are_track_scoped(self) -> None:
+        self.assertEqual(
+            HOUSTON_2020.main_output_dir,
+            Path("outputs/paper/houston_2020/day_ahead"),
+        )
+        self.assertEqual(
+            HOUSTON_2020.flex_ratio_sensitivity_output_dir,
+            Path("outputs/paper/houston_2020/sensitivity/flex_ratio"),
+        )
+        self.assertEqual(
+            HOUSTON_2020.storage_scale_sensitivity_output_dir,
+            Path("outputs/paper/houston_2020/sensitivity/storage_scale"),
+        )
+        self.assertEqual(
+            HOUSTON_2020.storage_energy_power_sensitivity_output_dir,
+            Path(
+                "outputs/paper/houston_2020/sensitivity/"
+                "storage_energy_power"
+            ),
+        )
+
     def test_sensitivity_command_requires_exact_study_name(self) -> None:
         command = self._parse_command(["sensitivity", "flex-ratio"])
 
@@ -73,12 +94,18 @@ class PaperCliRoutingTests(unittest.TestCase):
         self.assertEqual(day_ahead.arguments.day, 8)
         self.assertEqual(
             day_ahead.arguments.hourly_dispatch,
-            Path("outputs/houston_2020_main/results/hourly_dispatch.csv"),
+            Path(
+                "outputs/paper/houston_2020/day_ahead/results/"
+                "hourly_dispatch.csv"
+            ),
         )
         self.assertEqual(daily_costs.arguments.plot_name, "daily-costs")
         self.assertEqual(
             daily_costs.arguments.daily_metrics,
-            Path("outputs/houston_2020_main/results/daily_metrics.csv"),
+            Path(
+                "outputs/paper/houston_2020/day_ahead/results/"
+                "daily_metrics.csv"
+            ),
         )
 
 

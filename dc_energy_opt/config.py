@@ -82,14 +82,14 @@ class ScenarioConfig:
 HOUSTON_2020 = ScenarioConfig(
     workload_data=Path("data/workload/google_2019_28d_5min.csv"),
     energy_data=Path("data/energy/houston_2020_may_hourly.csv"),
-    main_output_dir=Path("outputs/houston_2020_main"),
+    main_output_dir=Path("outputs/paper/houston_2020/day_ahead"),
     flex_ratio_sensitivity_output_dir=Path(
-        "outputs/houston_2020_flex_ratio_sensitivity"
+        "outputs/paper/houston_2020/sensitivity/flex_ratio"
     ),
     storage_scale_sensitivity_output_dir=Path(
-        "outputs/houston_2020_storage_scale_sensitivity"
+        "outputs/paper/houston_2020/sensitivity/storage_scale"
     ),
     storage_energy_power_sensitivity_output_dir=Path(
-        "outputs/houston_2020_storage_energy_power_sensitivity"
+        "outputs/paper/houston_2020/sensitivity/storage_energy_power"
     ),
 )
