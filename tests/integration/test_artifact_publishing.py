@@ -10,7 +10,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 from unittest.mock import patch
 
-from dc_energy_opt.experiments.artifacts import (
+from dc_energy_opt.artifacts import (
     _remove_generated_path,
     staged_run_directory,
 )
@@ -189,7 +189,7 @@ class ArtifactPublishingTests(unittest.TestCase):
 
             with (
                 patch(
-                    "dc_energy_opt.experiments.artifacts.os.replace",
+                    "dc_energy_opt.artifacts.os.replace",
                     side_effect=fail_publish,
                 ),
                 self.assertRaisesRegex(OSError, "injected publish failure"),
@@ -226,7 +226,7 @@ class ArtifactPublishingTests(unittest.TestCase):
 
             with (
                 patch(
-                    "dc_energy_opt.experiments.artifacts.os.replace",
+                    "dc_energy_opt.artifacts.os.replace",
                     side_effect=fail_publish_and_restore,
                 ),
                 self.assertRaises(RuntimeError) as context,
@@ -296,7 +296,7 @@ class ArtifactPublishingTests(unittest.TestCase):
             final_output_dir = parent / "run"
             with (
                 patch(
-                    "dc_energy_opt.experiments.artifacts.os.replace",
+                    "dc_energy_opt.artifacts.os.replace",
                     side_effect=OSError("injected publish failure"),
                 ),
                 self.assertRaisesRegex(OSError, "injected publish failure"),
@@ -347,7 +347,7 @@ class ArtifactPublishingTests(unittest.TestCase):
             try:
                 with (
                     patch(
-                        "dc_energy_opt.experiments.artifacts.os.replace",
+                        "dc_energy_opt.artifacts.os.replace",
                         side_effect=fail_publish,
                     ),
                     self.assertRaisesRegex(
@@ -381,7 +381,7 @@ class ArtifactPublishingTests(unittest.TestCase):
 
             with (
                 patch(
-                    "dc_energy_opt.experiments.artifacts.shutil.rmtree",
+                    "dc_energy_opt.artifacts.shutil.rmtree",
                     side_effect=OSError("injected backup cleanup failure"),
                 ),
                 self.assertRaises(RuntimeError) as context,

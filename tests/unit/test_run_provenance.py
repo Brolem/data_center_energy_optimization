@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from dc_energy_opt.experiments.artifacts import build_run_provenance
+from dc_energy_opt.artifacts import build_run_provenance
 
 
 class RunProvenanceTests(unittest.TestCase):
@@ -21,7 +21,7 @@ class RunProvenanceTests(unittest.TestCase):
             energy_path.write_bytes(b"energy\n")
 
             with patch(
-                "dc_energy_opt.experiments.artifacts.subprocess.run",
+                "dc_energy_opt.artifacts.subprocess.run",
                 return_value=subprocess.CompletedProcess(
                     args=["git", "rev-parse", "HEAD"],
                     returncode=0,
@@ -55,7 +55,7 @@ class RunProvenanceTests(unittest.TestCase):
             path.write_bytes(b"input\n")
 
             with patch(
-                "dc_energy_opt.experiments.artifacts.subprocess.run",
+                "dc_energy_opt.artifacts.subprocess.run",
                 side_effect=OSError("git unavailable"),
             ):
                 provenance = build_run_provenance(

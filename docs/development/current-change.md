@@ -257,8 +257,8 @@ class PaperCliRoutingTests(unittest.TestCase):
 - 修改：`experiments/paper/houston_2020/__init__.py`
 - 修改：`experiments/paper/houston_2020/sensitivity/__init__.py`
 
-- [ ] 移动文件，不修改函数体和正式常量。
-- [ ] 将包内相对导入替换为以下精确边界：
+- [x] 移动文件，不修改函数体和正式常量。
+- [x] 将包内相对导入替换为以下精确边界：
 
 ```python
 from dc_energy_opt.artifacts import build_run_provenance, staged_run_directory
@@ -268,9 +268,9 @@ from dc_energy_opt.optimization import run_rolling_day_ahead
 from dc_energy_opt.reporting import software_versions
 ```
 
-- [ ] 在 `experiments/paper/houston_2020/__init__.py` 导出 `ExperimentResult` 和 `run_houston_2020_experiment`；在 `sensitivity/__init__.py` 导出三类敏感性分析现有结果类型和运行函数。
+- [x] 在 `experiments/paper/houston_2020/__init__.py` 导出 `ExperimentResult` 和 `run_houston_2020_experiment`；在 `sensitivity/__init__.py` 导出三类敏感性分析现有结果类型和运行函数。
 - [ ] 使用 `rg` 检查生产代码不再导入 `dc_energy_opt.experiments`。
-- [ ] 运行窗口模型和滚动调度测试，确认共享计算未改变。
+- [x] 运行模块边界、运行来源、事务发布、窗口模型和滚动调度测试；随后完整运行 136 项测试，全部通过，4 项因 Windows 符号链接权限跳过。
 
 ## 任务 3：建立统一论文命令入口
 
