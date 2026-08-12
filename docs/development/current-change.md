@@ -1,45 +1,86 @@
-# 当前变更：两条主线与共享底座
+# 当前变更：统一论文输出路径
 
 ## 结论
 
-该结构适合当前项目。论文研究和求职展示共享同一套数据、确定性调度模型、报告与结果发布能力，但分别拥有清晰入口，避免长期 Git 分支反复合并。
+`outputs/` 按“主线 → 场景 → 实验”组织。论文线和求职线从顶层隔离，Houston 2020 的主实验与敏感性分析在场景目录内分开。每个实验继续使用固定路径安全覆盖，不按时间创建运行目录。
 
-测试保留，但属于次级工程设施。当前无需把学习重点转向测试框架；只维护能保护数学约束、正式数据、实验口径和安全发布行为的最小测试集合。
+## 目标结构
 
-## 本次范围
+```text
+outputs/
+├── paper/
+│   └── houston_2020/
+│       ├── day_ahead/
+│       │   ├── inputs/
+│       │   ├── models/
+│       │   ├── results/
+│       │   ├── figures/
+│       │   └── run_metadata.json
+│       └── sensitivity/
+│           ├── flex_ratio/
+│           ├── storage_scale/
+│           └── storage_energy_power/
+└── career/
+```
 
-- 共享底座固定为 `dc_energy_opt/`；
-- 论文线固定为 `experiments/paper/`，使用统一命令入口；
-- 求职线建立 `experiments/career/` 边界，不添加未实现功能；
-- 测试按 `tests/shared/` 与 `tests/paper/` 归类；
-- 文档采用长期有效文档加本文件，不再为普通功能分别新增设计和计划文件；
-- 正式数据、数学模型、参数、计算口径与 `outputs/` 内容保持不变。
+三类敏感性分析目录继续保留各自现有的完整产物结构。产生 `analysis.md` 或 `experiments/` 子目录的实验仍在自己的最终目录内保存这些产物。
 
-## 已完成
+## 默认路径映射
 
-- [x] 将运行来源与事务发布能力移至共享底座；
-- [x] 将主实验、三类敏感性分析和两类绘图移入论文线；
-- [x] 建立六个统一论文命令并保留原有参数和默认路径；
-- [x] 将废弃入口移至 `archive/legacy_entrypoints/` 并记录命令映射；
-- [x] 删除正式代码对旧实验包路径的依赖；
-- [x] 将测试迁移到共享底座与论文线目录，并删除只保护废弃入口的兼容性断言；
-- [x] 建立根 README、文档索引、当前架构、论文线和求职线入口。
+| 论文命令 | 默认最终目录 |
+|---|---|
+| `python -m experiments.paper day-ahead` | `outputs/paper/houston_2020/day_ahead/` |
+| `python -m experiments.paper sensitivity flex-ratio` | `outputs/paper/houston_2020/sensitivity/flex_ratio/` |
+| `python -m experiments.paper sensitivity storage-scale` | `outputs/paper/houston_2020/sensitivity/storage_scale/` |
+| `python -m experiments.paper sensitivity storage-energy-power` | `outputs/paper/houston_2020/sensitivity/storage_energy_power/` |
 
-## 验收记录
+绘图命令保持不变：
 
-- 编译检查通过；
-- 完整测试：129 项通过，4 项因 Windows 无符号链接权限跳过；
-- 统一入口帮助正常显示 `day-ahead`、`sensitivity` 和 `plot`；
-- 现有三张正式结果表逐列等价：小时表 2,700 行、日表 112 行、算例表 4 行，最大绝对差均为 0；
-- `outputs/` 保持 4,580 个文件、262,285,219 字节；
-- 正式代码不再导入 `dc_energy_opt.experiments`；
-- 当前非归档文档不再引用废弃根入口；
-- Git 空白与批准范围检查通过。
+```powershell
+python -m experiments.paper plot day-ahead --day 28
+python -m experiments.paper plot daily-costs
+```
 
-## 后续维护规则
+它们默认读取 `outputs/paper/houston_2020/day_ahead/results/`，并写入 `outputs/paper/houston_2020/day_ahead/figures/`。
 
-1. 新功能开始前直接改写本文件的范围和验收项。
-2. 实施中不新增平行的设计或计划文档。
-3. 完成后把长期有效内容更新到 `docs/architecture.md` 或对应主题文档。
-4. 只在正式实验说明和正式结果报告需要独立追踪时增加文档。
-5. 测试按风险添加：正常路径、关键边界，以及正式数据或结果的回归检查。
+## 命令设计
+
+- 日常运行不需要提供输出参数；
+- 保留现有 `--output-dir`，用于明确指定临时或外部最终目录；
+- 保留绘图命令现有的结果文件和输出目录高级参数；
+- 不增加 `--output-root`、命令别名、结果清理命令或时间戳运行目录；
+- 不扁平化 `sensitivity` 子命令，继续让实验类别在命令层级中清晰可见。
+
+## 发布与失败处理
+
+每个实验的最终目录仍由 `staged_run_directory()` 整体发布。运行过程先在最终目录同级位置构建临时树；全部输入快照、模型、结果、图和元数据成功生成后，再替换固定最终目录。运行失败时保留上一份完整结果，不发布半成品。
+
+输入文件不得等于最终目录或位于最终目录内部。路径层级变化不得削弱现有冲突检查、只读文件处理、符号链接与目录联接保护。
+
+## 范围
+
+本次修改：
+
+- `HOUSTON_2020` 的四个默认输出目录；
+- 论文 CLI 的绘图默认读取与写入路径；
+- 当前非归档文档中的默认路径、目录树和产物链接；
+- 直接验证上述默认路径的测试断言。
+
+本次不修改：
+
+- 数学模型、正式参数、数据文件和计算口径；
+- 实验目录内部的 `inputs/`、`models/`、`results/`、`figures/` 结构；
+- 原子发布实现；
+- 用户已有结果文件。
+
+旧 `outputs/` 结果由用户自行删除。本次不迁移、不删除、不兼容旧输出目录，也不为旧路径增加回退逻辑。
+
+## 验收标准
+
+- 四个无输出参数的论文实验命令解析到表中规定的精确目录；
+- 两个绘图命令解析到 `day_ahead/results/` 和 `day_ahead/figures/`；
+- `--output-dir` 仍能覆盖各实验默认最终目录；
+- 当前非归档文档不再引用四个旧默认输出目录；
+- 共享底座与论文线测试通过，Windows 无符号链接权限时仅既有符号链接测试允许跳过；
+- 编译检查与 `git diff --check` 通过；
+- `git status` 不包含 `outputs/` 文件变更。
