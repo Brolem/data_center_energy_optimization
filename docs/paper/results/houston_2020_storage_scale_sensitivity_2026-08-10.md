@@ -48,10 +48,10 @@ S_{\mathrm{with\ storage}} = C_{\mathrm{renewables\ storage}} - C_{\mathrm{joint
 
 ## 可复核产物
 
-- [汇总指标 CSV](../../outputs/houston_2020_storage_scale_sensitivity/results/storage_scale_sensitivity.csv)
-- [总运行成本对比图](../../outputs/houston_2020_storage_scale_sensitivity/figures/storage_scale_total_cost.png)
-- [时移价值对比图](../../outputs/houston_2020_storage_scale_sensitivity/figures/storage_scale_shift_value.png)
-- [运行元数据](../../outputs/houston_2020_storage_scale_sensitivity/run_metadata.json)
-- [2 MWh / 0.5 MW 独立项目](../../outputs/houston_2020_storage_scale_sensitivity/experiments/energy_2p0_mwh_power_0p5_mw/)
-- [4 MWh / 1 MW 独立项目](../../outputs/houston_2020_storage_scale_sensitivity/experiments/energy_4p0_mwh_power_1p0_mw/)
-- [6 MWh / 1.5 MW 独立项目](../../outputs/houston_2020_storage_scale_sensitivity/experiments/energy_6p0_mwh_power_1p5_mw/)
+- [汇总指标 CSV](../../../outputs/houston_2020_storage_scale_sensitivity/results/storage_scale_sensitivity.csv)
+- [总运行成本对比图](../../../outputs/houston_2020_storage_scale_sensitivity/figures/storage_scale_total_cost.png)
+- [时移价值对比图](../../../outputs/houston_2020_storage_scale_sensitivity/figures/storage_scale_shift_value.png)
+- [运行元数据](../../../outputs/houston_2020_storage_scale_sensitivity/run_metadata.json)
+- [2 MWh / 0.5 MW 独立项目](../../../outputs/houston_2020_storage_scale_sensitivity/experiments/energy_2p0_mwh_power_0p5_mw/)
+- [4 MWh / 1 MW 独立项目](../../../outputs/houston_2020_storage_scale_sensitivity/experiments/energy_4p0_mwh_power_1p0_mw/)
+- [6 MWh / 1.5 MW 独立项目](../../../outputs/houston_2020_storage_scale_sensitivity/experiments/energy_6p0_mwh_power_1p5_mw/)
