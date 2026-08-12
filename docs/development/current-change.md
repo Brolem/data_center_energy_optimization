@@ -1,4 +1,16 @@
-# 当前变更：统一论文输出路径
+# 论文输出路径统一实施计划
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** 将论文实验默认输出统一到 `outputs/paper/houston_2020/`，同时保持现有简洁命令、固定路径安全覆盖和实验内部产物结构。
+
+**Architecture:** 只修改 `HOUSTON_2020` 中四个最终目录，论文 CLI 继续从该配置派生实验与绘图默认路径。现有实验函数和 `staged_run_directory()` 不变，因此每个叶子实验目录仍作为一个完整事务发布单元。
+
+**Tech Stack:** Python 3.13、`pathlib.Path`、标准库 `argparse`/`unittest`、PySCIPOpt 6.2.1。
+
+---
+
+## 已批准设计
 
 ## 结论
 
@@ -84,3 +96,201 @@ python -m experiments.paper plot daily-costs
 - 共享底座与论文线测试通过，Windows 无符号链接权限时仅既有符号链接测试允许跳过；
 - 编译检查与 `git diff --check` 通过；
 - `git status` 不包含 `outputs/` 文件变更。
+
+---
+
+## 实施任务
+
+### 任务 1：用精确路径测试驱动配置修改
+
+**文件：**
+
+- 修改：`tests/paper/test_cli.py`
+- 修改：`dc_energy_opt/config.py`
+
+- [ ] **步骤 1：添加四个配置路径和两个绘图路径的精确断言**
+
+在 `PaperCliRoutingTests` 中添加：
+
+```python
+def test_houston_2020_output_paths_are_track_scoped(self) -> None:
+    self.assertEqual(
+        HOUSTON_2020.main_output_dir,
+        Path("outputs/paper/houston_2020/day_ahead"),
+    )
+    self.assertEqual(
+        HOUSTON_2020.flex_ratio_sensitivity_output_dir,
+        Path("outputs/paper/houston_2020/sensitivity/flex_ratio"),
+    )
+    self.assertEqual(
+        HOUSTON_2020.storage_scale_sensitivity_output_dir,
+        Path("outputs/paper/houston_2020/sensitivity/storage_scale"),
+    )
+    self.assertEqual(
+        HOUSTON_2020.storage_energy_power_sensitivity_output_dir,
+        Path(
+            "outputs/paper/houston_2020/sensitivity/"
+            "storage_energy_power"
+        ),
+    )
+```
+
+同时把 `test_plot_commands_use_existing_result_paths` 中的两个固定期望改为：
+
+```python
+Path("outputs/paper/houston_2020/day_ahead/results/hourly_dispatch.csv")
+Path("outputs/paper/houston_2020/day_ahead/results/daily_metrics.csv")
+```
+
+- [ ] **步骤 2：运行路径测试并确认预期失败**
+
+运行：
+
+```powershell
+conda run -n scip_env python -m unittest tests.paper.test_cli.PaperCliRoutingTests -v
+```
+
+预期：新增固定路径测试和绘图默认路径测试因仍返回旧 `outputs/houston_2020_*` 路径而失败；其他路由断言通过。
+
+- [ ] **步骤 3：修改四个默认最终目录**
+
+将 `dc_energy_opt/config.py` 中的 `HOUSTON_2020` 输出字段改为：
+
+```python
+main_output_dir=Path("outputs/paper/houston_2020/day_ahead"),
+flex_ratio_sensitivity_output_dir=Path(
+    "outputs/paper/houston_2020/sensitivity/flex_ratio"
+),
+storage_scale_sensitivity_output_dir=Path(
+    "outputs/paper/houston_2020/sensitivity/storage_scale"
+),
+storage_energy_power_sensitivity_output_dir=Path(
+    "outputs/paper/houston_2020/sensitivity/storage_energy_power"
+),
+```
+
+- [ ] **步骤 4：运行论文 CLI 测试并确认通过**
+
+运行：
+
+```powershell
+conda run -n scip_env python -m unittest tests.paper.test_cli -v
+```
+
+预期：7 项测试全部通过；实验命令、绘图命令和 `--output-dir` 分派行为不变。
+
+- [ ] **步骤 5：提交配置与测试**
+
+```powershell
+git add -- dc_energy_opt/config.py tests/paper/test_cli.py
+git commit -m "refactor: organize paper output paths"
+```
+
+### 任务 2：更新当前文档中的输出路径
+
+**文件：**
+
+- 修改：`README.md`
+- 修改：`docs/architecture.md`
+- 修改：`docs/paper/experiments/houston_2020_experiment.md`
+- 修改：`docs/paper/experiments/houston_2020_storage_scale_sensitivity.md`
+- 修改：`docs/paper/experiments/houston_2020_storage_energy_power_sensitivity.md`
+- 修改：`docs/paper/results/houston_2020_storage_scale_sensitivity_2026-08-10.md`
+- 修改：`docs/paper/results/houston_2020_storage_energy_power_sensitivity_2026-08-11.md`
+
+- [ ] **步骤 1：更新架构与运行说明**
+
+根 README 和架构文档使用以下当前结构，不加入旧路径兼容说明：
+
+```text
+outputs/
+├── paper/
+│   └── houston_2020/
+│       ├── day_ahead/
+│       └── sensitivity/
+│           ├── flex_ratio/
+│           ├── storage_scale/
+│           └── storage_energy_power/
+└── career/
+```
+
+实验文档中的命令保持不变，只将默认目录、绘图参数示例和目录树替换为批准设计中的精确路径。
+
+- [ ] **步骤 2：更新正式结果报告的相对产物链接**
+
+储能规模报告使用：
+
+```text
+../../../outputs/paper/houston_2020/sensitivity/storage_scale/
+```
+
+储能能量与功率报告使用：
+
+```text
+../../../outputs/paper/houston_2020/sensitivity/storage_energy_power/
+```
+
+链接后半部分的 `results/`、`figures/`、`experiments/` 和 `run_metadata.json` 保持不变。
+
+- [ ] **步骤 3：确认当前文档不再引用四个旧目录**
+
+运行：
+
+```powershell
+rg -n "outputs/houston_2020_(main|flex_ratio_sensitivity|storage_scale_sensitivity|storage_energy_power_sensitivity)" README.md docs experiments --glob "!docs/archive/**"
+```
+
+预期：退出码 1，无匹配。
+
+- [ ] **步骤 4：提交文档更新**
+
+```powershell
+git add -- README.md docs/architecture.md docs/paper
+git commit -m "docs: update paper output locations"
+```
+
+### 任务 3：完整验收并记录结果
+
+**文件：**
+
+- 修改：`docs/development/current-change.md`
+
+- [ ] **步骤 1：验证六个命令的默认路径解析**
+
+运行：
+
+```powershell
+conda run -n scip_env python -m unittest tests.paper.test_cli -v
+```
+
+预期：7 项测试全部通过，其中四个实验目录和两个绘图文件路径均为批准设计中的精确路径。
+
+- [ ] **步骤 2：运行编译和完整测试**
+
+```powershell
+conda run -n scip_env python -m compileall -q dc_energy_opt experiments scripts tests
+conda run -n scip_env python -m unittest discover -s tests -t .
+```
+
+预期：编译退出码 0；129 项测试通过，Windows 无符号链接权限时仅既有 4 项符号链接测试跳过。
+
+- [ ] **步骤 3：验证文档、差异和输出目录未被修改**
+
+```powershell
+rg -n "outputs/houston_2020_(main|flex_ratio_sensitivity|storage_scale_sensitivity|storage_energy_power_sensitivity)" README.md docs experiments --glob "!docs/archive/**"
+git diff --check
+git status --short
+```
+
+预期：旧路径搜索无匹配；`git diff --check` 退出码 0；`git status --short` 不包含 `outputs/`。
+
+- [ ] **步骤 4：在本文件记录实际测试数量、跳过数量和检查结果**
+
+只记录实际命令输出，不生成正式实验结果，不创建新的 `outputs/` 目录。
+
+- [ ] **步骤 5：提交验收记录**
+
+```powershell
+git add -- docs/development/current-change.md
+git commit -m "docs: record output path verification"
+```
