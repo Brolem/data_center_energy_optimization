@@ -53,7 +53,7 @@ conda run -n scip_env python -m experiments.paper plot daily-costs
 
 ## 文档
 
-从[文档索引](docs/README.md)进入当前架构、模型、实验和结果说明。当前设计与实施状态集中在 `docs/development/current-change.md`，不再为每次修改新增多份设计文件。
+从[文档索引](docs/README.md)进入当前架构、模型、实验和结果说明。开发状态按主线分存于 `docs/development/paper/`、`docs/development/career/` 和 `docs/development/shared/`；`docs/development/current-change.md` 仅保留历史记录。
 
 ## 开发与验证
 

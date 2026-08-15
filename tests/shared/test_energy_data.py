@@ -143,7 +143,19 @@ class HoustonEnergyScenarioTests(unittest.TestCase):
 
 
 class EnergyDataTests(unittest.TestCase):
-    def test_gitattributes_preserves_both_formal_csv_byte_sequences(self) -> None:
+    def test_gitignore_excludes_local_ercot_and_alibaba_raw_sources(self) -> None:
+        lines = Path(".gitignore").read_text(encoding="utf-8").splitlines()
+
+        self.assertTrue(
+            {
+                "data/energy/ercot_2025_historical_dam_load_zone_and_hub_prices.zip",
+                "data/energy/eia_930_erco_full_history.xlsx",
+                "data/workload/alibaba_2026_spot_gpu_job_info_df.csv",
+                "data/workload/alibaba_2026_spot_gpu_node_info_df.csv",
+            }.issubset(lines)
+        )
+
+    def test_gitattributes_preserves_formal_csv_byte_sequences(self) -> None:
         lines = Path(".gitattributes").read_text(encoding="utf-8").splitlines()
 
         self.assertEqual(
@@ -151,6 +163,7 @@ class EnergyDataTests(unittest.TestCase):
             [
                 "data/workload/google_2019_28d_5min.csv -text",
                 "data/energy/houston_2020_may_hourly.csv -text -diff",
+                "data/energy/ercot_2025_houston_hourly.csv -text -diff",
             ],
         )
 

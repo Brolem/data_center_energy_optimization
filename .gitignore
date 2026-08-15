@@ -2,3 +2,9 @@ __pycache__/
 .vscode
 outputs/
 .worktrees/
+
+# 公开来源的本地原始输入；来源地址与 SHA-256 见 data/ 下的 README。
+data/energy/ercot_2025_historical_dam_load_zone_and_hub_prices.zip
+data/energy/eia_930_erco_full_history.xlsx
+data/workload/alibaba_2026_spot_gpu_job_info_df.csv
+data/workload/alibaba_2026_spot_gpu_node_info_df.csv

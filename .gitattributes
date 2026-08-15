@@ -1,2 +1,3 @@
 data/workload/google_2019_28d_5min.csv -text
 data/energy/houston_2020_may_hourly.csv -text -diff
+data/energy/ercot_2025_houston_hourly.csv -text -diff
