@@ -104,6 +104,32 @@ class RollingSettlementTests(unittest.TestCase):
             - first_settlement["actual_wind_used_mw"],
         )
 
+    def test_settlement_clips_only_a_small_grid_balance_residual(self) -> None:
+        planned = pd.DataFrame(
+            {
+                "timestamp_utc": ["2025-08-01T00:00:00Z"],
+                "workload_scheduled_pu": [0.1],
+                "dc_power_mw": [1.0],
+                "charge_mw": [0.0],
+                "discharge_mw": [0.0],
+                "solar_used_mw": [1.0000005],
+                "wind_used_mw": [0.0],
+            }
+        )
+        actual = _energy_frame(np.array([40.0]))
+        actual["solar_available_mw"] = 1.0000005
+        planned["timestamp_utc"] = pd.to_datetime(
+            actual["timestamp_utc"], format="%Y-%m-%dT%H:%M:%SZ"
+        )
+
+        settlement = settle_schedule(
+            planned_schedule=planned,
+            actual_energy=actual,
+            params=self.params,
+        )
+
+        self.assertEqual(float(settlement["actual_grid_power_mw"].iloc[0]), 0.0)
+
     def test_metrics_define_regret_against_oracle_actual_settlement(self) -> None:
         schedule, daily_metrics = run_rolling_market_dispatch(
             workload_arrival_pu=self.workload,
@@ -120,6 +146,7 @@ class RollingSettlementTests(unittest.TestCase):
         )
         baseline_settlement = oracle_settlement.copy()
         baseline_settlement["actual_grid_settlement_usd"] += 2.0
+        baseline_settlement["workload_scheduled_pu"] += 1e-7
         baseline_daily_metrics = daily_metrics.copy()
         baseline_daily_metrics["case"] = "baseline_forecast"
 
@@ -141,6 +168,7 @@ class RollingSettlementTests(unittest.TestCase):
         self.assertAlmostEqual(oracle_metrics["decision_regret_usd"], 0.0)
         self.assertAlmostEqual(baseline_metrics["decision_regret_usd"], 54.0)
         self.assertAlmostEqual(baseline_metrics["spot_work_completion_rate"], 1.0)
+        self.assertLessEqual(baseline_metrics["spot_work_completion_rate"], 1.0)
 
 
 if __name__ == "__main__":

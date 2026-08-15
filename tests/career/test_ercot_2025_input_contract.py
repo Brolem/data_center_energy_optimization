@@ -58,6 +58,18 @@ class Ercot2025CareerInputContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "缺失"):
             build_energy_splits(loaded)
 
+    def test_build_splits_rejects_missing_forecast_target_inside_closure(self) -> None:
+        missing = self.frame.copy()
+        closure_index = missing.index[
+            (missing["local_date"] == "2025-08-31")
+            & (missing["local_hour"] == 1)
+        ][0]
+        missing.loc[closure_index, "erco_wind_generation_mwh"] = float("nan")
+        loaded = load_energy_table(self._write_table(missing))
+
+        with self.assertRaisesRegex(ValueError, "缺失"):
+            build_energy_splits(loaded)
+
     def test_load_rejects_nonconsecutive_utc_timestamps(self) -> None:
         discontinuous = self.frame.drop(index=1).reset_index(drop=True)
         appended = discontinuous.iloc[[-1]].copy()

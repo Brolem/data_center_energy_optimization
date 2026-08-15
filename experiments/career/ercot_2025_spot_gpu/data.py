@@ -158,6 +158,7 @@ def build_energy_splits(frame: pd.DataFrame) -> EnergySplits:
     ].reset_index(drop=True)
     if len(closure) != SETTLEMENT_CLOSURE_HOURS:
         raise ValueError("测试结算尾段必须恰好包含 3 小时。")
+    closure = _coerce_forecast_targets(closure, require_complete=True)
     test_with_closure = pd.concat((test, closure), ignore_index=True)
     _require_hourly_utc_timestamps(test_with_closure)
     return EnergySplits(

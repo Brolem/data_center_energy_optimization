@@ -17,6 +17,7 @@ _PLANNED_COLUMNS = (
     "solar_used_mw",
     "wind_used_mw",
 )
+_GRID_BALANCE_TOLERANCE_MW = 1e-5
 
 
 def _validated_actual_energy(actual_energy: pd.DataFrame) -> pd.DataFrame:
@@ -84,8 +85,12 @@ def settle_schedule(
         - result["actual_solar_used_mw"]
         - result["actual_wind_used_mw"]
     )
-    if (result["actual_grid_power_mw"] < -1e-8).any():
-        raise RuntimeError("固定计划在实际能源下产生负购电功率。")
+    if (result["actual_grid_power_mw"] < -_GRID_BALANCE_TOLERANCE_MW).any():
+        minimum_grid_power = float(result["actual_grid_power_mw"].min())
+        raise RuntimeError(
+            "固定计划在实际能源下产生负购电功率: "
+            f"最小值={minimum_grid_power:.12g} MW。"
+        )
     result["actual_grid_power_mw"] = result["actual_grid_power_mw"].clip(lower=0.0)
     result["actual_grid_settlement_usd"] = (
         result["actual_price_usd_per_mwh"]
@@ -153,7 +158,9 @@ def build_decision_metrics(
                 "spot_work_arrived_pu_hours": arrived_work,
                 "spot_work_scheduled_pu_hours": scheduled_work,
                 "spot_work_completion_rate": (
-                    scheduled_work / arrived_work if arrived_work > 0.0 else 1.0
+                    min(1.0, scheduled_work / arrived_work)
+                    if arrived_work > 0.0
+                    else 1.0
                 ),
                 "average_flexible_work_delay_h": (
                     total_delay / flexible_work if flexible_work > 0.0 else 0.0

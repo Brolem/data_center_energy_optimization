@@ -14,6 +14,69 @@ _FORECAST_HORIZON_HOURS = 24
 _MINIMUM_HISTORY_HOURS = 169
 
 
+def _solve_linear_system(matrix: np.ndarray, right_hand_side: np.ndarray) -> np.ndarray:
+    """Solve a small, nonsingular system with partial pivoting."""
+    coefficients = np.asarray(matrix, dtype=float)
+    targets = np.asarray(right_hand_side, dtype=float).reshape(-1)
+    if coefficients.ndim != 2 or coefficients.shape[0] != coefficients.shape[1]:
+        raise ValueError("线性方程系数矩阵必须为方阵。")
+    if len(targets) != coefficients.shape[0]:
+        raise ValueError("线性方程右端项长度必须匹配系数矩阵。")
+    if not np.isfinite(coefficients).all() or not np.isfinite(targets).all():
+        raise ValueError("线性方程必须为有限数值。")
+    augmented = np.column_stack((coefficients.copy(), targets))
+    dimension = len(targets)
+    for pivot_column in range(dimension):
+        pivot_row = pivot_column + int(
+            np.argmax(np.abs(augmented[pivot_column:, pivot_column]))
+        )
+        pivot = float(augmented[pivot_row, pivot_column])
+        if abs(pivot) <= 1e-12:
+            raise ValueError("Ridge 线性方程不可逆。")
+        if pivot_row != pivot_column:
+            augmented[[pivot_column, pivot_row]] = augmented[
+                [pivot_row, pivot_column]
+            ]
+        augmented[pivot_column] /= augmented[pivot_column, pivot_column]
+        for row in range(dimension):
+            if row == pivot_column:
+                continue
+            factor = float(augmented[row, pivot_column])
+            if factor != 0.0:
+                augmented[row] -= factor * augmented[pivot_column]
+    return augmented[:, -1]
+
+
+def _ridge_normal_equations(
+    design: np.ndarray,
+    targets: np.ndarray,
+    *,
+    alpha: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build small Ridge normal equations without invoking a matrix backend."""
+    features = np.asarray(design, dtype=float)
+    values = np.asarray(targets, dtype=float).reshape(-1)
+    if features.ndim != 2 or len(features) == 0:
+        raise ValueError("Ridge 设计矩阵必须为非空二维数组。")
+    if len(values) != len(features):
+        raise ValueError("Ridge 目标长度必须匹配设计矩阵。")
+    if not np.isfinite(features).all() or not np.isfinite(values).all():
+        raise ValueError("Ridge 输入必须为有限数值。")
+    feature_count = features.shape[1]
+    matrix = np.empty((feature_count, feature_count), dtype=float)
+    right_hand_side = np.empty(feature_count, dtype=float)
+    for row in range(feature_count):
+        left_feature = features[:, row]
+        right_hand_side[row] = float(np.sum(left_feature * values))
+        for column in range(feature_count):
+            matrix[row, column] = float(
+                np.sum(left_feature * features[:, column])
+            )
+        if row != 0:
+            matrix[row, row] += alpha
+    return matrix, right_hand_side
+
+
 def _timestamps(frame: pd.DataFrame) -> pd.Series:
     timestamps = pd.to_datetime(
         frame["timestamp_utc"], format=_TIMESTAMP_FORMAT, errors="coerce"
@@ -166,11 +229,14 @@ class DirectRidgeDayAheadForecaster:
         feature_scales[feature_scales == 0.0] = 1.0
         standardized = (raw_features - feature_means) / feature_scales
         design = np.column_stack((np.ones(len(standardized)), standardized))
-        penalty = np.eye(design.shape[1], dtype=float)
-        penalty[0, 0] = 0.0
-        coefficients = np.linalg.solve(
-            design.T @ design + self.alpha * penalty,
-            design.T @ values[target_indices],
+        normal_matrix, normal_targets = _ridge_normal_equations(
+            design,
+            values[target_indices],
+            alpha=self.alpha,
+        )
+        coefficients = _solve_linear_system(
+            normal_matrix,
+            normal_targets,
         )
         return _FittedTargetModel(
             feature_means=feature_means,
@@ -244,13 +310,20 @@ def generate_day_ahead_forecast(
     forecast_horizon_hours: int = _FORECAST_HORIZON_HOURS,
 ) -> pd.DataFrame:
     """Create 24 forecasts using only rows strictly before the cutoff."""
-    checked = _require_target_values(frame, target_columns)
-    timestamps = _timestamps(checked)
+    timestamps = _timestamps(frame)
     origin = pd.to_datetime(
         forecast_origin_utc, format=_TIMESTAMP_FORMAT, errors="raise"
     )
-    history = checked.loc[timestamps < origin].copy().reset_index(drop=True)
-    future = checked.loc[timestamps >= origin].iloc[:forecast_horizon_hours].copy()
+    history = _require_target_values(
+        frame.loc[timestamps < origin].copy().reset_index(drop=True), target_columns
+    )
+    future = _require_target_values(
+        frame.loc[timestamps >= origin]
+        .iloc[:forecast_horizon_hours]
+        .copy()
+        .reset_index(drop=True),
+        target_columns,
+    )
     forecast_times = future.loc[:, ["timestamp_utc", "local_date", "local_hour"]]
     baseline = previous_day_forecast(
         history=history,

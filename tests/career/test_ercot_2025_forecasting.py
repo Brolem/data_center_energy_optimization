@@ -7,6 +7,8 @@ import pandas as pd
 
 from experiments.career.ercot_2025_spot_gpu.forecasting import (
     DirectRidgeDayAheadForecaster,
+    _ridge_normal_equations,
+    _solve_linear_system,
     evaluate_forecast_table,
     generate_day_ahead_forecast,
     previous_day_forecast,
@@ -57,6 +59,24 @@ class DayAheadForecastTests(unittest.TestCase):
             forecast["dam_lz_houston_usd_per_mwh"].to_numpy(),
             self.frame.loc[192:215, "dam_lz_houston_usd_per_mwh"].to_numpy(),
         )
+
+    def test_linear_solver_returns_the_known_solution(self) -> None:
+        coefficients = _solve_linear_system(
+            np.array([[3.0, 1.0], [1.0, 2.0]]),
+            np.array([9.0, 8.0]),
+        )
+
+        np.testing.assert_allclose(coefficients, np.array([2.0, 3.0]))
+
+    def test_ridge_normal_equations_use_an_unpenalized_intercept(self) -> None:
+        matrix, right_hand_side = _ridge_normal_equations(
+            np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]),
+            np.array([7.0, 8.0, 9.0]),
+            alpha=0.5,
+        )
+
+        np.testing.assert_allclose(matrix, np.array([[35.0, 44.0], [44.0, 56.5]]))
+        np.testing.assert_allclose(right_hand_side, np.array([76.0, 100.0]))
 
     def test_feature_forecast_does_not_use_values_after_cutoff(self) -> None:
         original = generate_day_ahead_forecast(
@@ -116,6 +136,19 @@ class DayAheadForecastTests(unittest.TestCase):
             forecast["timestamp_utc"].iloc[-1],
             frame_with_closure["timestamp_utc"].iloc[242],
         )
+
+    def test_forecast_ignores_missing_values_after_its_horizon(self) -> None:
+        frame_with_later_gap = _hourly_frame(300)
+        frame_with_later_gap.loc[299, TARGET_COLUMNS] = np.nan
+
+        forecast = generate_day_ahead_forecast(
+            frame=frame_with_later_gap,
+            forecast_origin_utc=self.forecast_origin_utc,
+            target_columns=TARGET_COLUMNS,
+            forecaster=DirectRidgeDayAheadForecaster(TARGET_COLUMNS),
+        )
+
+        self.assertEqual(len(forecast), 24)
 
     def test_validation_score_selects_only_the_lower_normalized_error(self) -> None:
         forecast_table = pd.DataFrame(
