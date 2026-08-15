@@ -624,6 +624,7 @@ def build_and_solve_market_window(
                 - result["workload_arrival_pu"].sum()
             )
         ),
+        "flexible_work_pu_hours": flexible_work_total,
         "total_work_delay_pu_hours": total_work_delay_value,
         "average_flexible_work_delay_h": (
             total_work_delay_value / flexible_work_total
