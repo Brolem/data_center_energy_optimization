@@ -14,4 +14,6 @@
 
 ## 验收记录
 
-待实现后记录新增窗口测试、既有共享回归测试和单位隔离检查的实际结果。
+- `tests.shared.test_market_window`：3 项测试通过，覆盖负价 USD 结算、储能功率平衡与终端电量、输入长度拒绝；
+- `tests/shared`：121 项测试通过；4 项符号链接测试因 Windows 当前权限跳过；
+- `dc_energy_opt/optimization/market_window.py` 不包含 `_cny_` 输出或指标字段，且不读取现有人民币成本参数。
