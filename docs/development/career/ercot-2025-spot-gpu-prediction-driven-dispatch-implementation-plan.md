@@ -58,7 +58,7 @@
       build_energy_splits(frame_with_na)
   ```
 
-  还要覆盖以下精确规则：`timestamp_utc` 必须唯一、升序且相邻相差一小时；三个目标必须为有限数值；测试期加 3 小时尾段必须连续；负的 `dam_lz_houston_usd_per_mwh` 不得被拒绝。
+  还要覆盖以下精确规则：`timestamp_utc` 必须唯一、升序且相邻相差一小时；年度表必须保留 EIA 发布的原始空值，固定训练、验证、测试与结算尾段内的三个目标则必须为有限数值；测试期加 3 小时尾段必须连续；负的 `dam_lz_houston_usd_per_mwh` 不得被拒绝。
 
 - [ ] **Step 3: 运行失败测试，确认测试先红。**
 
@@ -99,7 +99,7 @@
 
 - [ ] **Step 2: 实现严格读取与时间顺序切分。**
 
-  在 `data.py` 实现 `load_energy_table(path: Path) -> pd.DataFrame`、`build_energy_splits(frame: pd.DataFrame) -> EnergySplits` 和 `map_generation_signal_to_available_mw(...)`。读取器应严格核对完整列顺序、UTC 小时连续性、目标列无缺失和数值有限性；保留原有 `timestamp_utc`、`local_date` 与其余审计列。切分函数按 `local_date` 过滤固定日期，并断言训练、验证、测试分别为 181 个、30 个、30 个本地日期，训练期为 4,343 小时，验证和测试各为 720 小时，测试尾段为 3 小时且紧随测试期。
+  在 `data.py` 实现 `load_energy_table(path: Path) -> pd.DataFrame`、`build_energy_splits(frame: pd.DataFrame) -> EnergySplits` 和 `map_generation_signal_to_available_mw(...)`。读取器应严格核对完整列顺序、UTC 小时连续性、DAM 价格数值有效性，并保留 EIA 发布的原始风光空值及其余审计列；不得填补年度表。切分函数按 `local_date` 过滤固定日期，并在每个训练、验证、测试与结算尾段内断言三个预测目标为有限数值，训练、验证、测试分别为 181 个、30 个、30 个本地日期，训练期为 4,343 小时，验证和测试各为 720 小时，测试尾段为 3 小时且紧随测试期。
 
   风光映射采用下式，并在元数据中写明 `scenario_normalization`：
 
