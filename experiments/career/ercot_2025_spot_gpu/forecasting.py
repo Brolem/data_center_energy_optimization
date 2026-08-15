@@ -38,16 +38,22 @@ def _require_target_values(
     return checked
 
 
-def _require_forecast_times(forecast_times: pd.DataFrame) -> pd.DataFrame:
+def _require_forecast_times(
+    forecast_times: pd.DataFrame,
+    *,
+    forecast_horizon_hours: int = _FORECAST_HORIZON_HOURS,
+) -> pd.DataFrame:
     required_columns = ("timestamp_utc", "local_date", "local_hour")
     if any(column not in forecast_times for column in required_columns):
         raise ValueError("预测时点缺少时间字段。")
     checked = forecast_times.loc[:, required_columns].copy()
     timestamps = _timestamps(checked)
-    if len(checked) != _FORECAST_HORIZON_HOURS:
-        raise ValueError("日前预测必须恰好包含 24 小时。")
+    if not isinstance(forecast_horizon_hours, int) or forecast_horizon_hours < 24:
+        raise ValueError("forecast_horizon_hours 必须是不少于 24 的整数。")
+    if len(checked) != forecast_horizon_hours:
+        raise ValueError("日前预测时点数量不符合预测时域。")
     expected = pd.Series(
-        pd.date_range(timestamps.iloc[0], periods=_FORECAST_HORIZON_HOURS, freq="h"),
+        pd.date_range(timestamps.iloc[0], periods=forecast_horizon_hours, freq="h"),
         name="timestamp_utc",
     )
     if not timestamps.reset_index(drop=True).equals(expected):
@@ -73,19 +79,27 @@ def previous_day_forecast(
     history: pd.DataFrame,
     forecast_times: pd.DataFrame,
     target_columns: tuple[str, ...],
+    forecast_horizon_hours: int = _FORECAST_HORIZON_HOURS,
 ) -> pd.DataFrame:
     """Forecast the next day by copying the prior day's matching hours."""
     checked_history = _require_target_values(history, target_columns)
-    checked_times = _require_forecast_times(forecast_times)
+    checked_times = _require_forecast_times(
+        forecast_times, forecast_horizon_hours=forecast_horizon_hours
+    )
     future_timestamps = _timestamps(checked_times)
     result = checked_times.copy()
     for column in target_columns:
         _, lookup = _history_lookup(checked_history, column)
-        source_timestamps = future_timestamps - pd.Timedelta(hours=24)
-        values = lookup.reindex(source_timestamps)
-        if values.isna().any():
-            raise ValueError(f"{column} 缺少前一日同小时历史值。")
-        result[column] = values.to_numpy(dtype=float)
+        known_values = lookup.to_dict()
+        predictions: list[float] = []
+        for timestamp in future_timestamps:
+            source_timestamp = timestamp - pd.Timedelta(hours=24)
+            if source_timestamp not in known_values:
+                raise ValueError(f"{column} 缺少前一日同小时历史值。")
+            predicted = float(known_values[source_timestamp])
+            predictions.append(predicted)
+            known_values[timestamp] = predicted
+        result[column] = np.asarray(predictions, dtype=float)
     return result
 
 
@@ -169,39 +183,55 @@ class DirectRidgeDayAheadForecaster:
         *,
         history: pd.DataFrame,
         forecast_times: pd.DataFrame,
+        forecast_horizon_hours: int = _FORECAST_HORIZON_HOURS,
     ) -> pd.DataFrame:
         checked_history = _require_target_values(history, self.target_columns)
-        checked_times = _require_forecast_times(forecast_times)
+        checked_times = _require_forecast_times(
+            forecast_times, forecast_horizon_hours=forecast_horizon_hours
+        )
         future_timestamps = _timestamps(checked_times)
         result = checked_times.copy()
         for column in self.target_columns:
             fitted = self._fit_target(history=checked_history, target_column=column)
             _, values_by_timestamp = _history_lookup(checked_history, column)
-            lag_24 = values_by_timestamp.reindex(
-                future_timestamps - pd.Timedelta(hours=24)
-            )
-            lag_168 = values_by_timestamp.reindex(
-                future_timestamps - pd.Timedelta(hours=168)
-            )
-            if lag_24.isna().any() or lag_168.isna().any():
-                raise ValueError(f"{column} 缺少日前特征所需历史。")
-            raw_features = np.column_stack(
-                (
-                    lag_24.to_numpy(dtype=float),
-                    lag_168.to_numpy(dtype=float),
-                    self._calendar_features(future_timestamps),
+            known_values = values_by_timestamp.to_dict()
+            predictions: list[float] = []
+            for timestamp in future_timestamps:
+                lag_24_timestamp = timestamp - pd.Timedelta(hours=24)
+                lag_168_timestamp = timestamp - pd.Timedelta(hours=168)
+                if (
+                    lag_24_timestamp not in known_values
+                    or lag_168_timestamp not in known_values
+                ):
+                    raise ValueError(f"{column} 缺少日前特征所需历史。")
+                raw_features = np.concatenate(
+                    (
+                        np.array(
+                            [
+                                known_values[lag_24_timestamp],
+                                known_values[lag_168_timestamp],
+                            ],
+                            dtype=float,
+                        ),
+                        self._calendar_features(
+                            pd.Series([timestamp], name="timestamp_utc")
+                        )[0],
+                    )
                 )
-            )
-            standardized = (
-                raw_features - fitted.feature_means
-            ) / fitted.feature_scales
-            design = np.column_stack((np.ones(len(standardized)), standardized))
-            values = design @ fitted.coefficients
-            if column == "erco_solar_generation_mwh":
-                values = np.clip(values, 0.0, SOLAR_SIGNAL_MAX_MWH)
-            elif column == "erco_wind_generation_mwh":
-                values = np.clip(values, 0.0, WIND_SIGNAL_MAX_MWH)
-            result[column] = values
+                standardized = (
+                    raw_features - fitted.feature_means
+                ) / fitted.feature_scales
+                value = float(
+                    np.concatenate((np.array([1.0]), standardized))
+                    @ fitted.coefficients
+                )
+                if column == "erco_solar_generation_mwh":
+                    value = float(np.clip(value, 0.0, SOLAR_SIGNAL_MAX_MWH))
+                elif column == "erco_wind_generation_mwh":
+                    value = float(np.clip(value, 0.0, WIND_SIGNAL_MAX_MWH))
+                predictions.append(value)
+                known_values[timestamp] = value
+            result[column] = np.asarray(predictions, dtype=float)
         return result
 
 
@@ -211,6 +241,7 @@ def generate_day_ahead_forecast(
     forecast_origin_utc: str,
     target_columns: tuple[str, ...],
     forecaster: DirectRidgeDayAheadForecaster,
+    forecast_horizon_hours: int = _FORECAST_HORIZON_HOURS,
 ) -> pd.DataFrame:
     """Create 24 forecasts using only rows strictly before the cutoff."""
     checked = _require_target_values(frame, target_columns)
@@ -219,16 +250,18 @@ def generate_day_ahead_forecast(
         forecast_origin_utc, format=_TIMESTAMP_FORMAT, errors="raise"
     )
     history = checked.loc[timestamps < origin].copy().reset_index(drop=True)
-    future = checked.loc[timestamps >= origin].iloc[:_FORECAST_HORIZON_HOURS].copy()
+    future = checked.loc[timestamps >= origin].iloc[:forecast_horizon_hours].copy()
     forecast_times = future.loc[:, ["timestamp_utc", "local_date", "local_hour"]]
     baseline = previous_day_forecast(
         history=history,
         forecast_times=forecast_times,
         target_columns=target_columns,
+        forecast_horizon_hours=forecast_horizon_hours,
     )
     feature_model = forecaster.fit_predict(
         history=history,
         forecast_times=forecast_times,
+        forecast_horizon_hours=forecast_horizon_hours,
     )
     result = forecast_times.copy()
     result.insert(0, "forecast_origin_utc", forecast_origin_utc)

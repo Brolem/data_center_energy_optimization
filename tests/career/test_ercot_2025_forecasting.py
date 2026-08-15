@@ -101,6 +101,22 @@ class DayAheadForecastTests(unittest.TestCase):
         self.assertTrue((forecast["erco_wind_generation_mwh"] >= 0.0).all())
         self.assertIn("dam_lz_houston_usd_per_mwh", forecast.columns)
 
+    def test_day_ahead_forecast_can_include_three_hour_closure_preview(self) -> None:
+        frame_with_closure = _hourly_frame(243)
+        forecast = generate_day_ahead_forecast(
+            frame=frame_with_closure,
+            forecast_origin_utc=self.forecast_origin_utc,
+            target_columns=TARGET_COLUMNS,
+            forecaster=DirectRidgeDayAheadForecaster(TARGET_COLUMNS),
+            forecast_horizon_hours=27,
+        )
+
+        self.assertEqual(len(forecast), 27)
+        self.assertEqual(
+            forecast["timestamp_utc"].iloc[-1],
+            frame_with_closure["timestamp_utc"].iloc[242],
+        )
+
     def test_validation_score_selects_only_the_lower_normalized_error(self) -> None:
         forecast_table = pd.DataFrame(
             {
