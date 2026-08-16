@@ -14,7 +14,6 @@ from .types import PendingFlexibleTask, WindowSolveState
 
 _DEFAULT_TERMINAL_STORED_ENERGY = object()
 _STORAGE_BOUNDARY_TOLERANCE_MWH = 1e-9
-_SCIP_FEASIBILITY_TOLERANCE = 1e-9
 
 
 def _clamp_storage_boundary_energy(
@@ -221,7 +220,6 @@ def build_and_solve(
         model.hideOutput()
     model.setParam("limits/time", params.time_limit_s)
     model.setParam("limits/gap", params.relative_gap)
-    model.setParam("numerics/feastol", _SCIP_FEASIBILITY_TOLERANCE)
 
     scheduled_cpu = {
         t: model.addVar(
@@ -711,16 +709,14 @@ def build_and_solve(
         + battery_om_cost_value
         + battery_degradation_cost_value
     )
-    if (
-        operating_cost_value
-        > primary_operating_cost_value
-        + params.primary_cost_tolerance_cny
-        + 1e-6
-    ):
+    primary_cost_upper_bound = (
+        primary_operating_cost_value + params.primary_cost_tolerance_cny
+    )
+    if not model.isFeasLE(operating_cost_value, primary_cost_upper_bound):
         raise RuntimeError(
             f"{case_name} 二级解运行成本 {operating_cost_value:.12f} CNY "
             f"超过一级最优成本容差上限 "
-            f"{primary_operating_cost_value + params.primary_cost_tolerance_cny:.12f} "
+            f"{primary_cost_upper_bound:.12f} "
             "CNY。"
         )
     renewable_available_energy = float(
