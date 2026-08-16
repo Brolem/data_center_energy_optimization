@@ -67,6 +67,32 @@ class FlexRatioSensitivityTests(unittest.TestCase):
             50.0,
         )
 
+    def test_build_sensitivity_summary_rejects_gaplimit_status(self) -> None:
+        gap_limited = _metric("renewables_shift", 95.0, 86.0, 9.0)
+        gap_limited["status"] = "gaplimit"
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "metric status must be optimal; found gaplimit",
+        ):
+            build_sensitivity_summary(
+                baseline_metrics={
+                    "renewables_shift": _metric(
+                        "renewables_only", 100.0, 90.0, 10.0
+                    ),
+                    "joint": _metric(
+                        "renewables_storage", 80.0, 72.0, 8.0
+                    ),
+                },
+                solved_metrics={
+                    "renewables_shift": {0.1: gap_limited},
+                    "joint": {
+                        0.1: _metric("joint", 70.0, 63.0, 7.0)
+                    },
+                },
+                flex_ratios=(0.0, 0.1),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

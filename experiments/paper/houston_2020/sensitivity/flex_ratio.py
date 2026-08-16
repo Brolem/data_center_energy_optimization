@@ -94,6 +94,11 @@ def _validated_metric(
         )
     if not isinstance(metric["status"], str):
         raise ValueError("metric status 必须为字符串。")
+    if metric["status"] != "optimal":
+        raise RuntimeError(
+            "metric status must be optimal; "
+            f"found {metric['status']}"
+        )
 
     validated = {column: metric[column] for column in required_columns}
     for column in _NUMERIC_METRIC_COLUMNS:
@@ -280,7 +285,10 @@ def run_flex_ratio_sensitivity_experiment(
         energy_data,
         output_dir,
     )
-    base_params = Parameters() if params is None else params
+    base_params = replace(
+        Parameters() if params is None else params,
+        relative_gap=0.0,
+    )
 
     with staged_run_directory(output_path) as paths:
         workload_snapshot = paths.inputs / "google_2019_28d_5min.csv"
@@ -363,7 +371,7 @@ def run_flex_ratio_sensitivity_experiment(
             flex_ratios=ratios,
         )
         unaccepted = metrics.loc[
-            ~metrics["status"].isin(("optimal", "gaplimit")),
+            metrics["status"] != "optimal",
             "status",
         ]
         if not unaccepted.empty:
