@@ -19,6 +19,7 @@ class StorageEnergyPowerSensitivityExperimentTests(unittest.TestCase):
     ) -> None:
         def fake_main_experiment(**kwargs: object) -> ExperimentResult:
             params = kwargs["params"]
+            self.assertEqual(float(params.relative_gap), 0.0)
             output_dir = Path(kwargs["output_dir"])
             results_dir = output_dir / "results"
             results_dir.mkdir(parents=True)

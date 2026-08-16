@@ -102,7 +102,10 @@ def run_storage_energy_power_sensitivity_experiment(
         energy_data,
         output_dir,
     )
-    base_params = Parameters() if params is None else params
+    base_params = replace(
+        Parameters() if params is None else params,
+        relative_gap=0.0,
+    )
     if base_params.max_delay_h != 3:
         raise ValueError(
             "storage-energy-power sensitivity requires params.max_delay_h == 3"

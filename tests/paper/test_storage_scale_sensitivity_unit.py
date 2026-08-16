@@ -55,6 +55,28 @@ class StorageScaleSensitivityTests(unittest.TestCase):
         self.assertEqual(float(row["storage_shift_savings_cny"]), 6.0)
         self.assertEqual(float(row["storage_effect_on_shift_cny"]), -2.0)
 
+    def test_build_summary_rejects_gaplimit_status(self) -> None:
+        case_metrics = _case_metrics(
+            renewables_only=100.0,
+            renewables_shift=92.0,
+            renewables_storage=90.0,
+            joint=84.0,
+        )
+        case_metrics.loc[
+            case_metrics["case"] == "renewables_storage", "status"
+        ] = "gaplimit"
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "unaccepted solver status gaplimit",
+        ):
+            build_storage_scale_summary(
+                case_metrics_by_scale={
+                    "energy_2p0_mwh_power_0p5_mw": case_metrics
+                },
+                storage_scales=(DEFAULT_STORAGE_SCALES[0],),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

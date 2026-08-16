@@ -24,7 +24,7 @@ FORMAL_CASES = (
     "renewables_storage",
     "joint",
 )
-ACCEPTED_SOLVER_STATUSES = ("optimal", "gaplimit")
+ACCEPTED_SOLVER_STATUSES = ("optimal",)
 SUMMARY_COLUMNS = [
     "storage_scale",
     "battery_energy_mwh",
@@ -281,7 +281,10 @@ def run_storage_scale_sensitivity_experiment(
         energy_data,
         output_dir,
     )
-    base_params = Parameters() if params is None else params
+    base_params = replace(
+        Parameters() if params is None else params,
+        relative_gap=0.0,
+    )
     if base_params.max_delay_h != 3:
         raise ValueError(
             "storage-scale sensitivity requires params.max_delay_h == 3"

@@ -42,7 +42,9 @@ class FlexRatioSensitivityExperimentTests(unittest.TestCase):
             **kwargs: object,
         ) -> tuple[pd.DataFrame, dict[str, object], pd.DataFrame]:
             case_name = str(kwargs["case_name"])
-            flex_ratio = float(kwargs["params"].flex_ratio)
+            params = kwargs["params"]
+            self.assertEqual(float(params.relative_gap), 0.0)
+            flex_ratio = float(params.flex_ratio)
             baseline_costs = {
                 "renewables_only": 100.0,
                 "renewables_storage": 80.0,
