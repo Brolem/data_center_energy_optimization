@@ -66,7 +66,7 @@ class ParameterScaleTests(unittest.TestCase):
         self.assertEqual(params.primary_cost_tolerance_cny, 0.01)
         self.assertEqual(params.time_step_h, 1.0)
         self.assertEqual(params.time_limit_s, 60.0)
-        self.assertEqual(params.relative_gap, 1e-6)
+        self.assertEqual(params.relative_gap, 0.0)
 
     def test_only_approved_values_are_stored_as_parameter_fields(self) -> None:
         self.assertEqual(
