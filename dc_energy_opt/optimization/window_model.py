@@ -14,6 +14,7 @@ from .types import PendingFlexibleTask, WindowSolveState
 
 _DEFAULT_TERMINAL_STORED_ENERGY = object()
 _STORAGE_BOUNDARY_TOLERANCE_MWH = 1e-9
+_SCIP_FEASIBILITY_TOLERANCE = 1e-9
 
 
 def _clamp_storage_boundary_energy(
@@ -220,6 +221,7 @@ def build_and_solve(
         model.hideOutput()
     model.setParam("limits/time", params.time_limit_s)
     model.setParam("limits/gap", params.relative_gap)
+    model.setParam("numerics/feastol", _SCIP_FEASIBILITY_TOLERANCE)
 
     scheduled_cpu = {
         t: model.addVar(
