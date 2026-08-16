@@ -37,7 +37,7 @@ class Parameters:
     primary_cost_tolerance_cny: float = 0.01
     time_step_h: float = 1.0
     time_limit_s: float = 60.0
-    relative_gap: float = 1e-6
+    relative_gap: float = 0.0
 
     @property
     def server_idle_power_kw(self) -> float:
