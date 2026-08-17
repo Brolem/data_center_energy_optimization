@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "source": {
+    "dataset": "Alibaba cluster-trace-v2026-spot-gpu",
+    "url": "https://github.com/alibaba/clusterdata/tree/master/cluster-trace-v2026-spot-gpu",
+    "commit": "0d0f3f1efdbf1add6a7bcc63676eafbd1eb11f71",
+    "input_job_csv_sha256": "5A0C828A1C9CAE9D9AE73677371D59B4F3F0C55F25FE2E7CD06BC12DAF79648D",
+    "input_node_csv_sha256": "1ABA161961A5A4A1A61AA581383C5E5ABE3400B59F8597BA8C4EEF7597BC9D18",
+    "upstream_job_csv_sha256_at_commit": "113CCEE4C28F5C3BBAACA974CD164B9280B7D4C39E53B745443B28EEA05E03DD",
+    "upstream_node_csv_sha256_at_commit": "1ABA161961A5A4A1A61AA581383C5E5ABE3400B59F8597BA8C4EEF7597BC9D18",
+    "input_job_serialization_note": "field values were audited against the pinned upstream CSV; submit_time and duration are serialized as integers locally"
+  },
+  "normalization": {
+    "gpu_count": "gpu_request * worker_num",
+    "release_hour": "floor(submit_time / 3600)",
+    "required_run_hours": "ceil(duration / 3600)",
+    "spot_deadline": "release_hour + required_run_hours + 3",
+    "hp_deadline": null
+  },
+  "selection": {
+    "rule": "minimum absolute distance to median eligible Spot GPU-hours; earliest start breaks ties",
+    "core_hours": 720,
+    "max_spot_duration_hours": 168,
+    "core_start_hour": 933,
+    "core_end_hour_exclusive": 1653,
+    "core_start_seconds": 3358800,
+    "core_end_seconds_exclusive": 5950800,
+    "median_eligible_spot_gpu_hours": 122779.356667,
+    "selected_eligible_spot_gpu_hours": 122785.51625,
+    "selected_eligible_spot_gpu_hours_hourly_ceiling": 143918.0
+  },
+  "counts": {
+    "normalized_jobs": 466867,
+    "selected_core_jobs": 87083,
+    "selected_core_hp_jobs": 79968,
+    "selected_core_spot_jobs_before_duration_filter": 7115,
+    "selected_eligible_spot_jobs": 7104,
+    "selected_spot_over_max_duration_excluded": 11,
+    "selected_eligible_spot_jobs_by_model": {
+      "A10": 206,
+      "A100-SXM4-80GB": 2617,
+      "A800-SXM4-80GB": 338,
+      "GPU-series-1": 1128,
+      "GPU-series-2": 2560,
+      "H800": 255
+    },
+    "mapping_exclusions": {}
+  },
+  "model_capacity_gpus": {
+    "A10": 2494.0,
+    "A100-SXM4-80GB": 3456.0,
+    "A800-SXM4-80GB": 176.0,
+    "GPU-series-1": 1558.0,
+    "GPU-series-2": 976.0,
+    "H800": 1752.0
+  },
+  "power_scenarios": [
+    {
+      "name": "low",
+      "pue": 1.1,
+      "it_overhead_multiplier": 1.0,
+      "active_power_fraction": 0.5,
+      "model_tdp_or_assumed_watts": {
+        "A10": 150.0,
+        "A100-SXM4-80GB": 400.0,
+        "A800-SXM4-80GB": 400.0,
+        "GPU-series-1": 150.0,
+        "GPU-series-2": 300.0,
+        "H800": 700.0
+      }
+    },
+    {
+      "name": "baseline",
+      "pue": 1.2,
+      "it_overhead_multiplier": 1.15,
+      "active_power_fraction": 0.7,
+      "model_tdp_or_assumed_watts": {
+        "A10": 150.0,
+        "A100-SXM4-80GB": 400.0,
+        "A800-SXM4-80GB": 400.0,
+        "GPU-series-1": 300.0,
+        "GPU-series-2": 500.0,
+        "H800": 700.0
+      }
+    },
+    {
+      "name": "high",
+      "pue": 1.4,
+      "it_overhead_multiplier": 1.3,
+      "active_power_fraction": 0.9,
+      "model_tdp_or_assumed_watts": {
+        "A10": 150.0,
+        "A100-SXM4-80GB": 400.0,
+        "A800-SXM4-80GB": 400.0,
+        "GPU-series-1": 400.0,
+        "GPU-series-2": 700.0,
+        "H800": 700.0
+      }
+    }
+  ]
+}
