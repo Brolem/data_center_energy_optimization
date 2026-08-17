@@ -1,5 +1,7 @@
 # 论文线文档
 
+- [Spot GPU 算电协同顶层设计](design/ercot_2025_houston_spot_gpu_top_level_design.md)
+- [Spot GPU 算电协同实施计划](plans/spot-gpu-plan.md)
 - [确定性日前模型](model/deterministic_day_ahead_model.md)
 - [ERCOT 2025 Houston × Alibaba Spot GPU 主实验输入](experiments/ercot_2025_houston_spot_gpu_experiment.md)
 - [论文线当前数据准备状态](../development/paper/ercot_2025_houston_spot_gpu_energy_inputs.md)
