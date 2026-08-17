@@ -1,50 +1,56 @@
-# ERCOT 2025 Houston × Alibaba Spot GPU 主实验输入
+# ERCOT 2025 × Alibaba Spot GPU 主实验
 
 ## 研究边界
 
-本实验采用单一代表性数据中心：成本按 ERCOT `LZ_HOUSTON` 的日前市场结算点价格计量；可再生能源消纳和碳排放采用 ERCO 平衡区系统级信号。主目标为运行成本，风光对齐与消费侧碳排放为后续并列报告指标。
+本实验是单一代表性数据中心的反事实日前调度。成本使用 ERCOT `LZ_HOUSTON` DAM 价格；新能源指标使用 ERCO 平衡区系统风、光出力的时段匹配；碳指标使用 EIA ERCO 平均消费侧碳强度。Alibaba 2026 Spot GPU trace 仅提供未地理定位的相对工作负载，不能称为 Houston 的实际负载。
 
-Alibaba 2026 Spot GPU 作业数据只提供真实 GPU 作业的相对提交时间、资源请求、持续时间和优先级。它没有 Houston 位置、日历日期或时区。因此，后续实验必须将其明确表述为跨域、反事实的算力负荷重放，不能称为 Houston 或 ERCOT 的实际工作负载。
+系统风、光不是数据中心本地风电/光伏或物理购电来源；消费侧碳强度不是边际碳。实际风光与碳只用于事后评价。
 
-## 共享数据与论文专用输入
+## 固定时间窗口
 
-共享原始输入：
+| 季节 | 核心当地交割日 | 上下文 | 核心期 | 结算闭合期 |
+| --- | --- | ---: | ---: | ---: |
+| 冬季 | 2025-01-01 至 2025-01-30 | 171 h | 720 h | 171 h |
+| 春季 | 2025-04-01 至 2025-04-30 | 171 h | 720 h | 171 h |
+| 夏季 | 2025-07-01 至 2025-07-30 | 171 h | 720 h | 171 h |
+| 秋季 | 2025-10-01 至 2025-10-30 | 171 h | 720 h | 171 h |
 
-- `data/workload/alibaba_2026_spot_gpu_job_info_df.csv`
-- `data/workload/alibaba_2026_spot_gpu_node_info_df.csv`
-- `data/energy/ercot_2025_houston_hourly.csv`
+每个输入固定 1,062 个连续小时。`D_max=168 h`、`H=3 h`，故结算闭合期为 `D_max+H=171 h`；核心期结束后不再接收新 Spot 作业，但继续结算已有作业的能耗、成本、碳和未完成工作。`timestamp_utc` 是小时结束时刻，窗口核心按 ERCOT 当地交割日期选取，前后段按连续 UTC 时刻扩展。
 
-论文专用、固定且可复现的能源输入快照位于：
+## 日前信息集
 
-`outputs/paper/ercot_2025_houston_spot_gpu/day_ahead/inputs/`
+每个交割日前一日 18:00 `America/Chicago` 运行调度。次日 DAM 价格视为已知；风、光与消费侧碳由研究者从 EIA ERCO 历史观测预测。任一截止时刻 `c` 仅可使用 `timestamp_utc <= c-48h` 的数据。
 
-其中的 `inputs_manifest.json` 记录两个原始能源文件和所有生成 CSV 的 SHA-256。求职线可以读取共享年度表及原始 GPU 工作负载，但不得将本目录下的论文固定窗口当作其训练、验证或测试划分。
+主预测器为滚动 90 日、24 个目标小时直接预测的 NumPy Ridge；风、光、碳分别拟合。正则化强度只在 2024 年固定滚动起点上选择，28 日同小时中位数作为比较基线。2025 四个窗口不参与模型或超参数选择。
 
-## 固定窗口与结算闭合期
+## 输入字段
 
-| 窗口 | 主实验当地日期 | 主实验小时 | 结算闭合期 | 输入文件 |
-| --- | --- | ---: | ---: | --- |
-| 冬季 | 2025-01-01 至 2025-01-30 | 720 | 3 小时 | `2025-01-01_30d_h3h_energy.csv` |
-| 春季 | 2025-04-01 至 2025-04-30 | 720 | 3 小时 | `2025-04-01_30d_h3h_energy.csv` |
-| 夏季 | 2025-07-01 至 2025-07-30 | 720 | 3 小时 | `2025-07-01_30d_h3h_energy.csv` |
-| 秋季 | 2025-10-01 至 2025-10-30 | 720 | 3 小时 | `2025-10-01_30d_h3h_energy.csv` |
-
-每个文件有 723 行。`is_settlement_closure = 0` 的前 720 行为主实验，末 3 行为闭合期；闭合期内不允许新到达工作，仍采用真实的价格、风、光和碳时间序列，并用于完成已经到达的作业和恢复终端储能状态。当前 3 小时来自正式参数 `Parameters.max_delay_h = 3`；若 H 经设计审查变更，必须重新生成四个文件和哈希清单。
-
-四个窗口均避开夏令时切换日。共享年度表仍保留 DST 的完整 23/25 小时序列，以支持其他研究划分。
-
-## 数据完整性边界
-
-四个输入窗口的风、光和消费侧碳字段均无空值。共享年度表保留源 EIA 文件在 2025 年 12 月 3–5 日的未发布字段为空；论文主实验不使用这些小时，后续任何扩展到该时段的实验都必须拒绝空值或另行取得有出处的数据，不能插补。
-
-## 尚未生成工作负载窗口的原因
-
-本次仅固定能源侧时间窗口。Alibaba 原始作业表没有作业截止期，也没有可由本数据集直接推出的 GPU 功率或数据中心电力映射。把相对秒级作业记录转换为 30 天、可受 H 约束的小时级可调负荷，需要单独确定：作业筛选、GPU 到 IT 功率的标定、延迟语义以及跨四季的重放规则。上述规则完成设计审查前，不生成看似完整但缺少可复现语义的工作负载窗口。
-
-## 复现
-
-```powershell
-conda run -n scip_env python scripts/prepare_ercot_2025_houston_energy.py
+```text
+window_id,window_hour,period_role,interval_start_utc,interval_end_utc,local_date,
+dam_lz_houston_usd_per_mwh,erco_solar_generation_mwh,
+erco_wind_generation_mwh,erco_consumed_co2_intensity_lbs_per_kwh,
+forecast_cutoff_utc,forecast_method,forecast_erco_solar_generation_mwh,
+forecast_erco_wind_generation_mwh,forecast_consumed_co2_lbs_per_kwh
 ```
 
-该命令校验来源哈希，重建共享年度表、四个论文输入快照和输入清单。
+上下文行不需要预测；核心期与闭合期每小时必须有预测。`inputs_manifest.json` 记录原始来源和输出 SHA-256、48 小时保护期、Ridge 参数、2024 预测误差、28 日中位数误差及缺失值数量，不记录本机绝对路径或原始内容。
+
+## 2024 预测验证结果
+
+2024 年 12 个固定月度起点共评价 288 个目标小时，三个目标选择的 `alpha` 均为 100：
+
+| 目标 | Ridge MAE / nMAE | 28 日中位数 MAE / nMAE | 判读 |
+| --- | ---: | ---: | --- |
+| 消费侧碳强度 | 0.104 / 0.156 | 0.115 / 0.172 | Ridge 较优 |
+| 光伏出力 | 1324.654 / 0.245 | 1124.003 / 0.208 | 中位数较优 |
+| 风电出力 | 5212.919 / 0.341 | 5248.783 / 0.343 | Ridge 略优 |
+
+因此不得把默认模型的光伏预测性能写成论文创新。主实验保留统一 Ridge 作为预注册、因果且可复现的情景输入，并保留中位数对照；若后续替换光伏模型，必须沿用 48 小时保护、2024 选模和四个 2025 固定窗口。
+
+## 生成命令
+
+```powershell
+conda run -n scip_env python scripts/prepare_paper_ercot_2025_spot_gpu_inputs.py --eia-history PATH_TO_EIA_HISTORY --ercot-2024-dam PATH_TO_2024_DAM --source eia_930_erco=PATH_TO_EIA_HISTORY --source ercot_dam_2024_np4_180_er=PATH_TO_2024_DAM --source shared_ercot_2025=data/energy/ercot_2025_houston_hourly.csv
+```
+
+该命令不修改共享的 `scripts/prepare_ercot_2025_houston_energy.py`。原始 EIA、ERCOT 和 Alibaba 文件不进入 Git；紧凑论文输入位于 `outputs/paper/ercot_2025_houston_spot_gpu/day_ahead/inputs/`，且不作为求职线数据。

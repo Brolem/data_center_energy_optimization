@@ -1,10 +1,22 @@
 __pycache__/
 .vscode
-outputs/
+outputs/*
+!outputs/paper/
+!outputs/paper/ercot_2025_houston_spot_gpu/
+!outputs/paper/ercot_2025_houston_spot_gpu/day_ahead/
+!outputs/paper/ercot_2025_houston_spot_gpu/day_ahead/inputs/
+!outputs/paper/ercot_2025_houston_spot_gpu/day_ahead/inputs/*.csv
+!outputs/paper/ercot_2025_houston_spot_gpu/day_ahead/inputs/*.json
 .worktrees/
 
 # 公开来源的本地原始输入；来源地址与 SHA-256 见 data/ 下的 README。
 data/energy/ercot_2025_historical_dam_load_zone_and_hub_prices.zip
 data/energy/eia_930_erco_full_history.xlsx
+data/energy/ercot_2024_historical_dam_load_zone_and_hub_prices.zip
+data/energy/ercot_2024_houston_hourly.csv
+data/energy/ercot_2024_2025_system_hsl_forecasts.csv
+data/energy/ercot_wind_hsl_raw/
+data/energy/ercot_solar_hsl_raw/
+data/energy/ercot_fuel_mix_raw/
 data/workload/alibaba_2026_spot_gpu_job_info_df.csv
 data/workload/alibaba_2026_spot_gpu_node_info_df.csv

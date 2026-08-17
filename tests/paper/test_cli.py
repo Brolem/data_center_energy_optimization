@@ -137,6 +137,25 @@ class PaperCliRoutingTests(unittest.TestCase):
         )
         self.assertEqual(daily_costs.arguments.output_dir, figures_dir)
 
+    def test_spot_gpu_commands_use_paper_only_default_paths(self) -> None:
+        input_dir = Path(
+            "outputs/paper/ercot_2025_houston_spot_gpu/day_ahead/inputs"
+        )
+        output_dir = Path("outputs/paper/ercot_2025_houston_spot_gpu/day_ahead")
+
+        for action in ("replay", "pilot", "report"):
+            with self.subTest(action=action):
+                try:
+                    command = self._parse_command(["spot-gpu", action])
+                except SystemExit:
+                    command = None
+                self.assertIsNotNone(command, "spot-gpu command is unavailable")
+                assert command is not None
+                self.assertEqual(command.name, "spot-gpu")
+                self.assertEqual(command.study, action)
+                self.assertEqual(command.arguments.input_dir, input_dir)
+                self.assertEqual(command.arguments.output_dir, output_dir)
+
 
 class PaperCliExecutionTests(unittest.TestCase):
     def test_experiment_commands_route_to_exact_implementations(self) -> None:

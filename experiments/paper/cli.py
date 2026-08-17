@@ -31,6 +31,12 @@ from experiments.paper.houston_2020.summaries import (
 )
 
 
+SPOT_GPU_INPUT_DIR = Path(
+    "outputs/paper/ercot_2025_houston_spot_gpu/day_ahead/inputs"
+)
+SPOT_GPU_OUTPUT_DIR = Path("outputs/paper/ercot_2025_houston_spot_gpu/day_ahead")
+
+
 @dataclass(frozen=True)
 class PaperCommand:
     name: str
@@ -135,6 +141,17 @@ def _build_parser() -> argparse.ArgumentParser:
     plot_daily_costs.add_argument(
         "--output-dir", type=Path, default=main_figures_dir
     )
+
+    spot_gpu = commands.add_parser("spot-gpu")
+    spot_gpu_commands = spot_gpu.add_subparsers(dest="study", required=True)
+    for action in ("replay", "pilot", "report"):
+        action_parser = spot_gpu_commands.add_parser(action)
+        action_parser.add_argument(
+            "--input-dir", type=Path, default=SPOT_GPU_INPUT_DIR
+        )
+        action_parser.add_argument(
+            "--output-dir", type=Path, default=SPOT_GPU_OUTPUT_DIR
+        )
     return parser
 
 
@@ -206,5 +223,10 @@ def main(argv: list[str] | None = None) -> None:
             output_dir=args.output_dir,
         )
         return
+
+    if command.name == "spot-gpu":
+        raise RuntimeError(
+            "spot-gpu execution is introduced after the Stage 1 input contract"
+        )
 
     raise RuntimeError("unreachable paper command")
