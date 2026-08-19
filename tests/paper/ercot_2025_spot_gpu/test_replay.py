@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import unittest
 
+import pandas as pd
+
 from experiments.paper.ercot_2025_spot_gpu.power import PowerModel
+from experiments.paper.ercot_2025_spot_gpu.scheduler import ReplayCase, run_replay
 from experiments.paper.ercot_2025_spot_gpu.workload import (
     aggregate_model_capacities,
     normalize_job,
@@ -124,6 +127,95 @@ class ReplayContractTests(unittest.TestCase):
         self.assertLess(baseline.facility_mw(allocation), high.facility_mw(allocation))
         with self.assertRaisesRegex(ValueError, "missing power mapping"):
             baseline.facility_mw({"unknown-model": 1.0})
+
+
+def _scheduler_case() -> ReplayCase:
+    hp = normalize_job(
+        {
+            "job_name": "hp-1",
+            "organization": "org-hp",
+            "job_type": "HP",
+            "gpu_model": "A10",
+            "gpu_request": 3,
+            "worker_num": 1,
+            "submit_time": 0,
+            "duration": 1_800,
+        }
+    )
+    spot_jobs = tuple(
+        normalize_job(
+            {
+                "job_name": job_id,
+                "organization": "org-spot",
+                "job_type": "Spot",
+                "gpu_model": "A10",
+                "gpu_request": 2,
+                "worker_num": 1,
+                "submit_time": release * 3_600,
+                "duration": duration * 3_600,
+            }
+        )
+        for job_id, release, duration in (("spot-1", 0, 1), ("spot-2", 1, 2))
+    )
+    energy = pd.DataFrame(
+        {
+            "trace_hour": range(6),
+            "period_role": ["core", "core", "core", "settlement_tail", "settlement_tail", "settlement_tail"],
+            "dam_lz_houston_usd_per_mwh": [100.0, 80.0, 20.0, 10.0, 50.0, 100.0],
+            "forecast_erco_solar_generation_mwh": [0.0, 1.0, 4.0, 5.0, 1.0, 0.0],
+            "forecast_erco_wind_generation_mwh": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+            "forecast_consumed_co2_lbs_per_kwh": [1.0, 0.9, 0.4, 0.2, 0.8, 1.0],
+            "erco_solar_generation_mwh": [0.0, 2.0, 3.0, 4.0, 1.0, 0.0],
+            "erco_wind_generation_mwh": [1.0, 2.0, 2.0, 2.0, 1.0, 1.0],
+            "erco_consumed_co2_intensity_lbs_per_kwh": [1.1, 1.0, 0.5, 0.3, 0.9, 1.1],
+        }
+    )
+    return ReplayCase(
+        energy=energy,
+        capacities={"A10": 4.0},
+        spot_jobs=spot_jobs,
+        hp_jobs=(hp,),
+        core_start_hour=0,
+        core_hours=3,
+        tail_hours=3,
+        decision_block_hours=3,
+        hp_calibration_hours=2,
+        power_model=PowerModel.baseline(),
+    )
+
+
+class SchedulerTests(unittest.TestCase):
+    def test_hp_preemption_and_recovered_gangs_respect_capacity_and_time(self) -> None:
+        result = run_replay(_scheduler_case(), policy="price")
+
+        self.assertTrue((result.hourly["hp_capacity_invasion_gpus"] == 0.0).all())
+        self.assertTrue((result.hourly["spot_capacity_excess_gpus"] == 0.0).all())
+        self.assertAlmostEqual(result.hourly.loc[0, "hp_active_gpus"], 1.5)
+        completed = result.jobs.loc[result.jobs["completed"]]
+        self.assertTrue(completed["deadline_feasible"].all())
+        self.assertTrue((result.hourly.loc[3:, "new_spot_arrivals"] == 0).all())
+
+    def test_proposed_policy_keeps_cost_guard_before_other_objectives(self) -> None:
+        result = run_replay(_scheduler_case(), policy="proposed")
+        tolerance = 0.01 * max(abs(result.price_optimum_usd), 1.0)
+
+        self.assertLessEqual(result.cost_usd, result.price_optimum_usd + tolerance + 1e-6)
+        self.assertEqual(result.solver_status, "optimal")
+
+    def test_actual_energy_signals_change_evaluation_not_schedule(self) -> None:
+        case = _scheduler_case()
+        baseline = run_replay(case, policy="proposed")
+        changed_energy = case.energy.copy()
+        for column in (
+            "erco_solar_generation_mwh",
+            "erco_wind_generation_mwh",
+            "erco_consumed_co2_intensity_lbs_per_kwh",
+        ):
+            changed_energy[column] *= 2.0
+        changed = run_replay(case.with_energy(changed_energy), policy="proposed")
+
+        self.assertEqual(baseline.schedule, changed.schedule)
+        self.assertNotEqual(baseline.actual_co2_kg, changed.actual_co2_kg)
 
 
 if __name__ == "__main__":

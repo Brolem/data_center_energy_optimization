@@ -52,3 +52,13 @@ class PowerScenario:
     it_overhead_multiplier: float
     active_power_fraction: float
     model_tdp_watts: tuple[tuple[str, float], ...]
+
+
+@dataclass(frozen=True)
+class ScheduledRun:
+    """One recovered, whole-gang execution hour for a trace job."""
+
+    job_id: str
+    trace_hour: int
+    gpu_model: str
+    gpu_count: float

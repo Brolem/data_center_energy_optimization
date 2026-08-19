@@ -164,7 +164,11 @@ def select_replay_core(
         and core_start <= job.release_hour < core_end
         and job.required_run_hours > max_duration_hours
     )
-    hp_jobs = tuple(job for job in ordered if job.priority == "HP")
+    hp_jobs = tuple(
+        job
+        for job in ordered
+        if job.priority == "HP" and core_start <= job.release_hour < core_end
+    )
     return ReplaySelection(
         core_start_hour=core_start,
         core_end_hour=core_end,
