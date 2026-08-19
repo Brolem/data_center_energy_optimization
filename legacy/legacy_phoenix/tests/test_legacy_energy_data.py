@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 import numpy as np
 import pandas as pd
 
-import archive.legacy_phoenix.legacy_energy_data as energy_data
+import legacy.legacy_phoenix.legacy_energy_data as energy_data
 from dc_energy_opt.config import Parameters
 
 

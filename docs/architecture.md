@@ -1,12 +1,14 @@
 # 项目架构
 
+> 本仓库已冻结归档；本文描述的是历史工作结构，不再演进。归档说明见根目录 [ARCHIVED.md](../ARCHIVED.md)。
+
 ## 总体结构
 
 ```text
 dc_energy_opt/       共享底座：配置、数据、优化、报告、产物发布
 experiments/
   paper/             论文线：Houston 2020 实验、敏感性与绘图
-  career/            求职线：复用底座的展示项目边界
+  career/            求职线（已归档）：ERCOT 2025 Spot GPU 预测驱动调度
 data/                 共享正式输入
 outputs/
   paper/

@@ -1,5 +1,7 @@
 # ERCOT 2025 Houston × Alibaba Spot GPU 主实验输入
 
+> **已归档**：本实验的完整实现、数据与调度器见 Git tag `archive/paper-spot-gpu`，不在当前 `main`。后续研究方向已迁到独立项目（Alibaba cluster-trace-v2018）。
+
 ## 研究边界
 
 本实验采用单一代表性数据中心：成本按 ERCOT `LZ_HOUSTON` 的日前市场结算点价格计量；可再生能源消纳和碳排放采用 ERCO 平衡区系统级信号。主目标为运行成本，风光对齐与消费侧碳排放为后续并列报告指标。
